@@ -1,0 +1,63 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color: #332f2a;
+  background: #f7f0df;
+  font-family: 'Gowun Dodum', system-ui, sans-serif;
+}
+
+body {
+  min-width: 320px;
+  margin: 0;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+.cork-bg {
+  background-color: #d4a866;
+  background-image:
+    radial-gradient(rgba(92, 66, 38, 0.22) 1px, transparent 1px),
+    radial-gradient(rgba(255, 244, 218, 0.22) 1px, transparent 1px);
+  background-position: 0 0, 12px 12px;
+  background-size: 24px 24px;
+}
+
+.felt-bg {
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0)),
+    repeating-linear-gradient(45deg, rgba(102, 121, 93, 0.08) 0 2px, transparent 2px 7px),
+    #e8ead3;
+}
+
+.paper-edge::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.35), transparent 22%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.4), transparent 26%);
+  border-radius: inherit;
+}
+
+.fade-pop {
+  animation: fade-pop 260ms ease-out;
+}
+
+@keyframes fade-pop {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}

@@ -1,0 +1,79 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function userDoc(uid) {
+      return get(/databases/$(database)/documents/users/$(uid));
+    }
+
+    function role() {
+      return signedIn() ? userDoc(request.auth.uid).data.role : null;
+    }
+
+    function isAdmin() {
+      return role() == 'admin';
+    }
+
+    function isTeacher() {
+      return role() == 'teacher';
+    }
+
+    function isStudent() {
+      return role() == 'student';
+    }
+
+    function wallDoc(wallId) {
+      return get(/databases/$(database)/documents/walls/$(wallId));
+    }
+
+    function canReadWall(wallId) {
+      let wall = wallDoc(wallId).data;
+      return wall.accessMode == 'public' || signedIn();
+    }
+
+    function postDoc(postId) {
+      return get(/databases/$(database)/documents/posts/$(postId));
+    }
+
+    match /users/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || isAdmin() || (isTeacher() && resource.data.teacherId == request.auth.uid));
+      allow create, update, delete: if isAdmin() || (isTeacher() && request.resource.data.role == 'student' && request.resource.data.teacherId == request.auth.uid);
+    }
+
+    match /walls/{wallId} {
+      allow read: if resource.data.accessMode == 'public' || signedIn();
+      allow create: if isTeacher() && request.resource.data.ownerId == request.auth.uid;
+      allow update, delete: if isTeacher() && resource.data.ownerId == request.auth.uid;
+    }
+
+    match /posts/{postId} {
+      allow read: if canReadWall(resource.data.wallId);
+      allow create: if canReadWall(request.resource.data.wallId);
+      allow update: if false;
+      allow delete: if signedIn() && (resource.data.authorId == request.auth.uid || wallDoc(resource.data.wallId).data.ownerId == request.auth.uid);
+    }
+
+    match /comments/{commentId} {
+      allow read: if canReadWall(postDoc(resource.data.postId).data.wallId);
+      allow create: if canReadWall(postDoc(request.resource.data.postId).data.wallId)
+        && wallDoc(postDoc(request.resource.data.postId).data.wallId).data.commentsEnabled == true;
+      allow update: if false;
+      allow delete: if signedIn() && resource.data.authorId == request.auth.uid;
+    }
+
+    match /likes/{likeId} {
+      allow read: if true;
+      allow create: if signedIn()
+        && likeId == request.resource.data.postId + '_' + request.auth.uid
+        && wallDoc(postDoc(request.resource.data.postId).data.wallId).data.likesEnabled == true;
+      allow delete: if signedIn()
+        && likeId == resource.data.postId + '_' + request.auth.uid
+        && wallDoc(postDoc(resource.data.postId).data.wallId).data.likesEnabled == true;
+      allow update: if false;
+    }
+  }
+}
