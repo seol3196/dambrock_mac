@@ -30,7 +30,18 @@ function homePath(role) {
   return '/';
 }
 
-const columnNumbers = [1, 2, 3, 4];
+function clampColumnCount(value) {
+  const count = Number(value);
+  if (!Number.isInteger(count)) return 4;
+  return Math.min(5, Math.max(1, count));
+}
+
+function backgroundSwatch(value) {
+  return (
+    wallBackgroundOptions.find((option) => option.value === value)?.swatch ||
+    wallBackgroundOptions[0].swatch
+  );
+}
 
 export default function WallPage() {
   const { wallId } = useParams();
@@ -44,6 +55,10 @@ export default function WallPage() {
   const [shareOpen, setShareOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [draggingPost, setDraggingPost] = useState(null);
+  const [wallError, setWallError] = useState('');
+  const [viewportWidth, setViewportWidth] = useState(
+    typeof window === 'undefined' ? 1600 : window.innerWidth
+  );
   const [form, setForm] = useState({
     content: '',
     color: colorOptions[0].value
@@ -52,39 +67,90 @@ export default function WallPage() {
   const origin = typeof window === 'undefined' ? '' : window.location.origin;
   const shareUrl = `${origin}/wall/${wallId}`;
   const canManageWall = Boolean(user && role === 'teacher' && wall?.ownerId === user.uid);
+  const columnCount = clampColumnCount(wall?.columnCount ?? 4);
+  const columnNumbers = useMemo(
+    () => Array.from({ length: columnCount }, (_, index) => index + 1),
+    [columnCount]
+  );
+  const visibleColumns =
+    viewportWidth >= 1280 ? columnCount : viewportWidth >= 768 ? Math.min(columnCount, 2) : 1;
+  const boardGridStyle = useMemo(
+    () => ({
+      gridTemplateColumns: `repeat(${visibleColumns}, minmax(0, 1fr))`
+    }),
+    [visibleColumns]
+  );
+  const corkStyle = useMemo(
+    () => ({
+      backgroundColor: backgroundSwatch(wall?.backgroundTone)
+    }),
+    [wall?.backgroundTone]
+  );
 
   useEffect(() => {
-    const unsubscribe = onSnapshot(doc(db, 'walls', wallId), (snapshot) => {
-      setWallMissing(!snapshot.exists());
-      const nextWall = snapshot.exists() ? { id: snapshot.id, ...snapshot.data() } : null;
-      setWall(nextWall);
-      if (nextWall) {
-        setSettingsForm({
-          title: nextWall.title || '',
-          description: nextWall.description || '',
-          accessMode: nextWall.accessMode || 'login',
-          commentsEnabled: nextWall.commentsEnabled ?? true,
-          likesEnabled: nextWall.likesEnabled ?? true,
-          backgroundTone: nextWall.backgroundTone || wallBackgroundOptions[0].value
-        });
+    if (typeof window === 'undefined') return undefined;
+
+    const handleResize = () => setViewportWidth(window.innerWidth);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  useEffect(() => {
+    if (loading) return undefined;
+
+    const unsubscribe = onSnapshot(
+      doc(db, 'walls', wallId),
+      (snapshot) => {
+        setWallError('');
+        setWallMissing(!snapshot.exists());
+        const nextWall = snapshot.exists() ? { id: snapshot.id, ...snapshot.data() } : null;
+        setWall(nextWall);
+
+        if (nextWall) {
+          setSettingsForm({
+            title: nextWall.title || '',
+            description: nextWall.description || '',
+            accessMode: nextWall.accessMode || 'login',
+            commentsEnabled: nextWall.commentsEnabled ?? true,
+            likesEnabled: nextWall.likesEnabled ?? true,
+            backgroundTone: nextWall.backgroundTone || wallBackgroundOptions[0].value,
+            columnCount: clampColumnCount(nextWall.columnCount ?? 4)
+          });
+        }
+      },
+      (error) => {
+        setWall(null);
+        setWallMissing(false);
+        setWallError(error?.code === 'permission-denied' ? 'permission-denied' : 'load-failed');
       }
-    });
+    );
+
     return unsubscribe;
-  }, [wallId]);
+  }, [loading, wallId]);
 
   useEffect(() => {
+    if (loading || !wall) return undefined;
+    if (wall.accessMode === 'login' && !user) return undefined;
+
     const postsQuery = query(collection(db, 'posts'), where('wallId', '==', wallId));
-    const unsubPosts = onSnapshot(postsQuery, (snapshot) => {
-      setPosts(
-        snapshot.docs
-          .map((item) => ({ id: item.id, ...item.data() }))
-          .sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0))
-      );
-    });
-    return () => {
-      unsubPosts();
-    };
-  }, [wallId]);
+    const unsubscribe = onSnapshot(
+      postsQuery,
+      (snapshot) => {
+        setWallError('');
+        setPosts(
+          snapshot.docs
+            .map((item) => ({ id: item.id, ...item.data() }))
+            .sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0))
+        );
+      },
+      (error) => {
+        setPosts([]);
+        setWallError(error?.code === 'permission-denied' ? 'permission-denied' : 'load-failed');
+      }
+    );
+
+    return unsubscribe;
+  }, [loading, user, wall, wallId]);
 
   useEffect(() => {
     if (!posts.length) {
@@ -115,20 +181,19 @@ export default function WallPage() {
   }, [likes]);
 
   const postsByColumn = useMemo(() => {
-    const grouped = { 1: [], 2: [], 3: [], 4: [] };
-    const fallbackColumns = [1, 2, 3, 4];
+    const grouped = Object.fromEntries(columnNumbers.map((column) => [column, []]));
     let fallbackIndex = 0;
 
     for (const post of posts) {
       const column =
         post.column && grouped[post.column]
           ? post.column
-          : fallbackColumns[fallbackIndex++ % fallbackColumns.length];
+          : columnNumbers[fallbackIndex++ % columnNumbers.length];
       grouped[column].push(post);
     }
 
     return grouped;
-  }, [posts]);
+  }, [columnNumbers, posts]);
 
   if (!loading && wall?.accessMode === 'login' && !user) {
     return <Navigate to="/" replace state={{ from: location }} />;
@@ -137,6 +202,11 @@ export default function WallPage() {
   async function submitPost(event) {
     event.preventDefault();
     if (!form.content.trim()) return;
+    if (loading) return;
+    if (wall?.accessMode === 'login' && !user) {
+      alert('로그인이 필요한 담벼락입니다. 다시 로그인해 주세요.');
+      return;
+    }
 
     await createPost({
       wallId,
@@ -156,7 +226,10 @@ export default function WallPage() {
 
   async function saveSettings() {
     if (!settingsForm) return;
-    await updateWall(wallId, settingsForm);
+    await updateWall(wallId, {
+      ...settingsForm,
+      columnCount: clampColumnCount(settingsForm.columnCount)
+    });
     setSettingsOpen(false);
   }
 
@@ -176,8 +249,25 @@ export default function WallPage() {
     );
   }
 
+  if (!loading && wallError === 'permission-denied' && !user) {
+    return <Navigate to="/" replace state={{ from: location }} />;
+  }
+
+  if (!loading && wallError === 'permission-denied') {
+    return (
+      <main className="felt-bg grid min-h-screen place-items-center px-4">
+        <section className="rounded-[8px] bg-white/90 p-6 shadow-soft text-center">
+          <p className="font-bold text-stone-900">담벼락을 불러올 권한이 없습니다.</p>
+          <p className="mt-2 text-sm text-stone-600">
+            로그인 상태를 확인한 뒤 다시 들어와 주세요.
+          </p>
+        </section>
+      </main>
+    );
+  }
+
   return (
-    <main className="cork-bg min-h-screen">
+    <main className="cork-bg min-h-screen" style={corkStyle}>
       <header className="sticky top-0 z-10 border-b border-stone-900/10 bg-white/88 backdrop-blur">
         <div className="mx-auto flex w-full max-w-[1600px] items-center justify-between gap-4 px-5 py-4">
           <div className="min-w-0">
@@ -200,7 +290,7 @@ export default function WallPage() {
             <div className="flex items-center gap-2">
               <button
                 type="button"
-                onClick={() => setSettingsOpen((value) => !value)}
+                onClick={() => setSettingsOpen(true)}
                 className="inline-flex items-center gap-2 rounded-[10px] border border-stone-300 bg-white px-4 py-2 text-sm font-bold text-stone-800 shadow-sm"
               >
                 <Settings2 size={16} />
@@ -220,196 +310,66 @@ export default function WallPage() {
       </header>
 
       <section className="mx-auto w-full max-w-[1600px] px-5 py-6">
-        <div className={`grid gap-6 ${canManageWall && settingsOpen ? 'xl:grid-cols-[minmax(0,1fr)_360px]' : ''}`}>
-          <div
-            data-testid="wall-board"
-            className={`rounded-[22px] border border-white/60 p-5 shadow-soft ${
-              wall?.backgroundTone || wallBackgroundOptions[0].value
-            }`}
-          >
-            {wall?.description && (
-              <p className="mb-5 rounded-[14px] bg-white/75 p-4 text-stone-700 shadow-sm">
-                {wall.description}
-              </p>
-            )}
-
-            {canManageWall ? (
-              <div className="grid gap-5 xl:grid-cols-4">
-                {columnNumbers.map((column) => (
-                  <div
-                    key={column}
-                    data-testid={`wall-column-${column}`}
-                    onDragOver={(event) => {
-                      if (canManageWall) event.preventDefault();
-                    }}
-                    onDrop={(event) => {
-                      event.preventDefault();
-                      if (canManageWall) movePostToColumn(column);
-                    }}
-                    className={`min-h-[220px] rounded-[18px] border border-dashed p-3 ${
-                      draggingPost && canManageWall
-                        ? 'border-stone-400 bg-white/35'
-                        : 'border-transparent'
-                    }`}
-                  >
-                    <div className="mb-3 flex items-center justify-between px-1">
+        <div data-testid="wall-board">
+          {canManageWall ? (
+            <div className="grid gap-5" style={boardGridStyle}>
+              {columnNumbers.map((column) => (
+                <div
+                  key={column}
+                  data-testid={`wall-column-${column}`}
+                  onDragOver={(event) => {
+                    if (canManageWall) event.preventDefault();
+                  }}
+                  onDrop={(event) => {
+                    event.preventDefault();
+                    if (canManageWall) movePostToColumn(column);
+                  }}
+                  className={`min-h-[220px] rounded-[12px] ${
+                    draggingPost && canManageWall
+                      ? 'bg-white/18 outline outline-2 outline-dashed outline-stone-400'
+                      : ''
+                  }`}
+                >
+                  {draggingPost && (
+                    <div className="mb-3 px-1">
                       <span className="text-xs font-bold uppercase tracking-[0.2em] text-stone-500">
                         Column {column}
                       </span>
-                      <span className="text-xs text-stone-500">여기로 드래그</span>
                     </div>
-                    <div className="space-y-4">
-                      {postsByColumn[column].map((post) => (
-                        <PostCard
-                          key={post.id}
-                          post={post}
-                          wall={wall || {}}
-                          likes={likesByPost[post.id] || []}
-                          isTeacherView={canManageWall}
-                          onDragStart={setDraggingPost}
-                          onDragEnd={() => setDraggingPost(null)}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-4">
-                {posts.map((post) => (
-                  <PostCard
-                    key={post.id}
-                    post={post}
-                    wall={wall || {}}
-                    likes={likesByPost[post.id] || []}
-                  />
-                ))}
-              </div>
-            )}
-
-            {!posts.length && (
-              <div className="mt-5 rounded-[16px] border border-dashed border-white/70 bg-white/70 p-10 text-center text-stone-700">
-                아직 포스트잇이 없습니다. 첫 글을 남겨보세요.
-              </div>
-            )}
-          </div>
-
-          {canManageWall && settingsOpen && settingsForm && (
-            <aside className="rounded-[18px] bg-white/90 p-5 shadow-soft">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-bold uppercase tracking-[0.2em] text-amber-700">
-                    Wall Settings
-                  </p>
-                  <h2 className="mt-2 text-2xl font-bold text-stone-950">담벼락 설정</h2>
-                </div>
-                <Palette className="text-stone-500" size={20} />
-              </div>
-
-              <div className="mt-5 space-y-4">
-                <div>
-                  <label className="mb-2 block text-sm font-bold text-stone-700">제목</label>
-                  <input
-                    value={settingsForm.title}
-                    onChange={(e) =>
-                      setSettingsForm({ ...settingsForm, title: e.target.value })
-                    }
-                    className="h-11 w-full rounded-[8px] border border-stone-200 px-3"
-                  />
-                </div>
-                <div>
-                  <label className="mb-2 block text-sm font-bold text-stone-700">설명</label>
-                  <textarea
-                    value={settingsForm.description}
-                    onChange={(e) =>
-                      setSettingsForm({ ...settingsForm, description: e.target.value })
-                    }
-                    className="min-h-24 w-full rounded-[8px] border border-stone-200 p-3"
-                  />
-                </div>
-                <label className="flex items-center justify-between rounded-[10px] border border-stone-200 px-4 py-3">
-                  <span className="text-sm font-bold text-stone-800">로그인 필요</span>
-                  <input
-                    type="checkbox"
-                    checked={settingsForm.accessMode === 'login'}
-                    onChange={(e) =>
-                      setSettingsForm({
-                        ...settingsForm,
-                        accessMode: e.target.checked ? 'login' : 'public'
-                      })
-                    }
-                  />
-                </label>
-                <label className="flex items-center justify-between rounded-[10px] border border-stone-200 px-4 py-3">
-                  <span className="text-sm font-bold text-stone-800">댓글 허용</span>
-                  <input
-                    type="checkbox"
-                    checked={settingsForm.commentsEnabled}
-                    onChange={(e) =>
-                      setSettingsForm({
-                        ...settingsForm,
-                        commentsEnabled: e.target.checked
-                      })
-                    }
-                  />
-                </label>
-                <label className="flex items-center justify-between rounded-[10px] border border-stone-200 px-4 py-3">
-                  <span className="text-sm font-bold text-stone-800">좋아요 허용</span>
-                  <input
-                    type="checkbox"
-                    checked={settingsForm.likesEnabled}
-                    onChange={(e) =>
-                      setSettingsForm({
-                        ...settingsForm,
-                        likesEnabled: e.target.checked
-                      })
-                    }
-                  />
-                </label>
-
-                <div>
-                  <p className="mb-2 text-sm font-bold text-stone-700">배경 색상</p>
-                  <div className="grid grid-cols-3 gap-2">
-                    {wallBackgroundOptions.map((option) => (
-                      <button
-                        key={option.value}
-                        type="button"
-                        onClick={() =>
-                          setSettingsForm({
-                            ...settingsForm,
-                            backgroundTone: option.value
-                          })
-                        }
-                        className={`rounded-[12px] border p-3 text-sm font-bold text-stone-700 ${option.value} ${
-                          settingsForm.backgroundTone === option.value
-                            ? 'border-stone-900'
-                            : 'border-transparent'
-                        }`}
-                      >
-                        {option.name}
-                      </button>
+                  )}
+                  <div className="space-y-4">
+                    {postsByColumn[column].map((post) => (
+                      <PostCard
+                        key={post.id}
+                        post={post}
+                        wall={wall || {}}
+                        likes={likesByPost[post.id] || []}
+                        isTeacherView={canManageWall}
+                        onDragStart={setDraggingPost}
+                        onDragEnd={() => setDraggingPost(null)}
+                      />
                     ))}
                   </div>
                 </div>
-              </div>
+              ))}
+            </div>
+          ) : (
+            <div className="grid gap-5" style={boardGridStyle}>
+              {posts.map((post) => (
+                <PostCard
+                  key={post.id}
+                  post={post}
+                  wall={wall || {}}
+                  likes={likesByPost[post.id] || []}
+                />
+              ))}
+            </div>
+          )}
 
-              <div className="mt-5 flex gap-2">
-                <button
-                  type="button"
-                  onClick={saveSettings}
-                  className="flex-1 rounded-[10px] bg-stone-900 px-4 py-3 text-sm font-bold text-white"
-                >
-                  설정 저장
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSettingsOpen(false)}
-                  className="rounded-[10px] border border-stone-300 px-4 py-3 text-sm font-bold text-stone-700"
-                >
-                  닫기
-                </button>
-              </div>
-            </aside>
+          {!posts.length && (
+            <div className="mt-5 rounded-[16px] border border-dashed border-white/70 bg-white/55 p-10 text-center text-stone-700">
+              아직 포스트잇이 없습니다. 첫 글을 남겨보세요.
+            </div>
           )}
         </div>
       </section>
@@ -422,6 +382,134 @@ export default function WallPage() {
       >
         <Plus size={30} />
       </button>
+
+      {settingsOpen && canManageWall && settingsForm && (
+        <div className="fixed inset-0 z-30 grid place-items-center bg-stone-950/45 px-4">
+          <section className="w-full max-w-lg overflow-hidden rounded-[18px] bg-white p-5 shadow-soft">
+            <div className="flex items-center justify-between">
+              <h2 className="text-2xl font-bold text-stone-950">담벼락 설정</h2>
+              <button
+                type="button"
+                onClick={() => setSettingsOpen(false)}
+                className="rounded-full p-2 hover:bg-stone-100"
+                aria-label="설정 닫기"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="mt-5 space-y-4">
+              <div>
+                <label className="mb-2 block text-sm font-bold text-stone-700">제목</label>
+                <input
+                  value={settingsForm.title}
+                  onChange={(e) => setSettingsForm({ ...settingsForm, title: e.target.value })}
+                  className="h-11 w-full rounded-[8px] border border-stone-200 px-3"
+                />
+              </div>
+              <div>
+                <label className="mb-2 block text-sm font-bold text-stone-700">설명</label>
+                <textarea
+                  value={settingsForm.description}
+                  onChange={(e) => setSettingsForm({ ...settingsForm, description: e.target.value })}
+                  className="min-h-24 w-full rounded-[8px] border border-stone-200 p-3"
+                />
+              </div>
+              <div>
+                <label className="mb-2 block text-sm font-bold text-stone-700">컬럼 개수</label>
+                <select
+                  value={settingsForm.columnCount}
+                  onChange={(e) =>
+                    setSettingsForm({
+                      ...settingsForm,
+                      columnCount: clampColumnCount(e.target.value)
+                    })
+                  }
+                  className="h-11 w-full rounded-[8px] border border-stone-200 bg-white px-3"
+                >
+                  {[1, 2, 3, 4, 5].map((count) => (
+                    <option key={count} value={count}>
+                      {count}개
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <label className="flex items-center justify-between rounded-[10px] border border-stone-200 px-4 py-3">
+                <span className="text-sm font-bold text-stone-800">로그인 필요</span>
+                <input
+                  type="checkbox"
+                  checked={settingsForm.accessMode === 'login'}
+                  onChange={(e) =>
+                    setSettingsForm({
+                      ...settingsForm,
+                      accessMode: e.target.checked ? 'login' : 'public'
+                    })
+                  }
+                />
+              </label>
+              <label className="flex items-center justify-between rounded-[10px] border border-stone-200 px-4 py-3">
+                <span className="text-sm font-bold text-stone-800">댓글 사용</span>
+                <input
+                  type="checkbox"
+                  checked={settingsForm.commentsEnabled}
+                  onChange={(e) =>
+                    setSettingsForm({ ...settingsForm, commentsEnabled: e.target.checked })
+                  }
+                />
+              </label>
+              <label className="flex items-center justify-between rounded-[10px] border border-stone-200 px-4 py-3">
+                <span className="text-sm font-bold text-stone-800">좋아요 사용</span>
+                <input
+                  type="checkbox"
+                  checked={settingsForm.likesEnabled}
+                  onChange={(e) =>
+                    setSettingsForm({ ...settingsForm, likesEnabled: e.target.checked })
+                  }
+                />
+              </label>
+              <div>
+                <p className="mb-2 text-sm font-bold text-stone-700">코르크 배경 색상</p>
+                <div className="grid grid-cols-3 gap-2">
+                  {wallBackgroundOptions.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() =>
+                        setSettingsForm({ ...settingsForm, backgroundTone: option.value })
+                      }
+                      className={`rounded-[12px] border p-3 text-sm font-bold text-stone-700 ${
+                        settingsForm.backgroundTone === option.value
+                          ? 'border-stone-900'
+                          : 'border-transparent'
+                      }`}
+                      style={{ backgroundColor: option.swatch }}
+                    >
+                      {option.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-5 flex gap-2">
+              <button
+                type="button"
+                onClick={saveSettings}
+                className="flex-1 rounded-[10px] bg-stone-900 px-4 py-3 text-sm font-bold text-white"
+              >
+                설정 저장
+              </button>
+              <button
+                type="button"
+                onClick={() => setSettingsOpen(false)}
+                className="rounded-[10px] border border-stone-300 px-4 py-3 text-sm font-bold text-stone-700"
+              >
+                닫기
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
 
       {modalOpen && (
         <div className="fixed inset-0 z-20 grid place-items-center bg-stone-950/45 px-4">
@@ -444,7 +532,7 @@ export default function WallPage() {
               value={form.content}
               onChange={(e) => setForm({ ...form, content: e.target.value })}
               className="mt-4 min-h-40 w-full resize-y rounded-[10px] border border-stone-200 p-3 text-base leading-7 outline-none focus:border-amber-500"
-              placeholder="생각이나 링크를 자유롭게 남겨보세요."
+              placeholder="생각이나 링크를 자유롭게 적어보세요."
             />
             <div className="mt-4 flex flex-wrap gap-2">
               {colorOptions.map((color) => (

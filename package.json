@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "create-admin": "node --env-file=.env scripts/create-admin.mjs",
+    "deploy:functions": "npx firebase-tools deploy --only functions --project dambrock",
     "preview": "vite preview"
   },
   "dependencies": {

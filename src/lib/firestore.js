@@ -8,7 +8,8 @@ import {
   setDoc,
   updateDoc
 } from 'firebase/firestore';
-import { db } from './firebase';
+import { httpsCallable } from 'firebase/functions';
+import { db, functions } from './firebase';
 
 export const colorOptions = [
   { name: '노랑', value: 'bg-yellow-100', swatch: '#fef3c7' },
@@ -19,17 +20,18 @@ export const colorOptions = [
 ];
 
 export const wallBackgroundOptions = [
-  { name: '크림', value: 'bg-[#fff8e8]' },
-  { name: '민트', value: 'bg-[#edf7f2]' },
-  { name: '하늘', value: 'bg-[#eef6ff]' },
-  { name: '라일락', value: 'bg-[#f5efff]' },
-  { name: '피치', value: 'bg-[#fff0ea]' },
-  { name: '모래', value: 'bg-[#f3ead8]' }
+  { name: '크림', value: 'bg-[#fff8e8]', swatch: '#e6d3ad' },
+  { name: '민트', value: 'bg-[#edf7f2]', swatch: '#b8c9a3' },
+  { name: '하늘', value: 'bg-[#eef6ff]', swatch: '#a6bdd6' },
+  { name: '라일락', value: 'bg-[#f5efff]', swatch: '#b7a4cb' },
+  { name: '피치', value: 'bg-[#fff0ea]', swatch: '#d8a684' },
+  { name: '모래', value: 'bg-[#f3ead8]', swatch: '#c89c67' }
 ];
 
 export function createWall(data) {
   return addDoc(collection(db, 'walls'), {
     backgroundTone: wallBackgroundOptions[0].value,
+    columnCount: 4,
     ...data,
     createdAt: serverTimestamp()
   });
@@ -80,6 +82,17 @@ export async function toggleLike(postId, userId) {
     await deleteDoc(likeRef);
     return false;
   }
+
   await setDoc(likeRef, { postId, userId, createdAt: serverTimestamp() });
   return true;
+}
+
+export async function deleteStudentAccount(studentUid) {
+  const callable = httpsCallable(functions, 'deleteStudentAccount');
+  return callable({ uid: studentUid });
+}
+
+export async function setStudentPasswords(studentUids, password) {
+  const callable = httpsCallable(functions, 'setStudentPasswords');
+  return callable({ uids: studentUids, password });
 }

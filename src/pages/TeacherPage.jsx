@@ -1,30 +1,31 @@
 import {
   Copy,
   ExternalLink,
+  KeyRound,
   Pencil,
   Printer,
+  RotateCcw,
   Settings,
   Trash2,
   Users
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import {
-  collection,
-  deleteDoc,
-  doc,
-  onSnapshot,
-  query,
-  updateDoc,
-  where
-} from 'firebase/firestore';
+import { collection, doc, onSnapshot, query, updateDoc, where } from 'firebase/firestore';
 import { Link } from 'react-router-dom';
 import Field from '../components/Field.jsx';
 import Layout from '../components/Layout.jsx';
 import { useAuth } from '../contexts/AuthContext.jsx';
 import { createUser } from '../lib/auth';
-import { createWall, deleteWall } from '../lib/firestore';
+import {
+  createWall,
+  deleteStudentAccount,
+  deleteWall,
+  setStudentPasswords
+} from '../lib/firestore';
 import { db } from '../lib/firebase';
 import { dateText, paddedNumber, wallTone } from '../lib/ui';
+
+const RESET_PASSWORD = '123456';
 
 export default function TeacherPage() {
   const { user, displayId, profile } = useAuth();
@@ -35,8 +36,13 @@ export default function TeacherPage() {
     prefix: 'class_',
     start: '01',
     end: '30',
-    password: '123456',
+    password: RESET_PASSWORD,
     nameList: ''
+  });
+  const [singleStudentForm, setSingleStudentForm] = useState({
+    id: '',
+    displayName: '',
+    password: RESET_PASSWORD
   });
   const [wallForm, setWallForm] = useState({
     title: '',
@@ -54,12 +60,13 @@ export default function TeacherPage() {
       where('teacherId', '==', user.uid)
     );
     const wallsQuery = query(collection(db, 'walls'), where('ownerId', '==', user.uid));
-    const unsubStudents = onSnapshot(studentsQuery, (snapshot) =>
-      setStudents(snapshot.docs.map((item) => ({ uid: item.id, ...item.data() })))
-    );
-    const unsubWalls = onSnapshot(wallsQuery, (snapshot) =>
-      setWalls(snapshot.docs.map((item) => ({ id: item.id, ...item.data() })))
-    );
+
+    const unsubStudents = onSnapshot(studentsQuery, (snapshot) => {
+      setStudents(snapshot.docs.map((item) => ({ uid: item.id, ...item.data() })));
+    });
+    const unsubWalls = onSnapshot(wallsQuery, (snapshot) => {
+      setWalls(snapshot.docs.map((item) => ({ id: item.id, ...item.data() })));
+    });
 
     return () => {
       unsubStudents();
@@ -132,9 +139,9 @@ export default function TeacherPage() {
       2
     );
     const studentEntries = names.length
-      ? names.map((displayName, index) => ({
+      ? names.map((studentName, index) => ({
           serial: paddedNumber(start + index, width),
-          displayName
+          displayName: studentName
         }))
       : Array.from({ length: end - start + 1 }, (_, index) => {
           const number = start + index;
@@ -186,10 +193,51 @@ export default function TeacherPage() {
     });
   }
 
+  async function createSingleStudent(event) {
+    event.preventDefault();
+
+    const id = String(singleStudentForm.id).trim();
+    const displayName = String(singleStudentForm.displayName).trim();
+    const password = String(singleStudentForm.password).trim();
+
+    if (!id) {
+      alert('학생 ID를 입력해 주세요.');
+      return;
+    }
+    if (!displayName) {
+      alert('학생 이름을 입력해 주세요.');
+      return;
+    }
+    if (password.length < 6) {
+      alert('학생 비밀번호는 6자 이상이어야 합니다.');
+      return;
+    }
+
+    try {
+      await createUser(id, password, 'student', {
+        displayName,
+        teacherId: user.uid,
+        passwordHint: password
+      });
+      alert('학생 계정을 생성했습니다.');
+      setSingleStudentForm({
+        id: '',
+        displayName: '',
+        password: RESET_PASSWORD
+      });
+    } catch (error) {
+      const message =
+        error?.code === 'auth/email-already-in-use'
+          ? '이미 존재하는 학생 ID입니다.'
+          : error?.message || '학생 계정 생성 중 오류가 발생했습니다.';
+      alert(message);
+    }
+  }
+
   return (
     <Layout
       badge="교사 모드"
-      title={`${profile?.displayName || displayId}의 담벼락`}
+      title={`${profile?.displayName || displayId} 선생님`}
       userLabel={displayId}
       aside={aside}
     >
@@ -198,6 +246,9 @@ export default function TeacherPage() {
           form={studentForm}
           setForm={setStudentForm}
           submit={createStudents}
+          singleForm={singleStudentForm}
+          setSingleForm={setSingleStudentForm}
+          submitSingle={createSingleStudent}
           students={students}
         />
       ) : (
@@ -213,9 +264,21 @@ export default function TeacherPage() {
   );
 }
 
-function StudentManager({ form, setForm, submit, students }) {
+function StudentManager({
+  form,
+  setForm,
+  submit,
+  singleForm,
+  setSingleForm,
+  submitSingle,
+  students
+}) {
   const [editingUid, setEditingUid] = useState(null);
   const [nameDraft, setNameDraft] = useState('');
+  const [passwordUid, setPasswordUid] = useState(null);
+  const [passwordDraft, setPasswordDraft] = useState('');
+  const [selectedUids, setSelectedUids] = useState([]);
+  const [batchPassword, setBatchPassword] = useState('');
 
   const sorted = useMemo(
     () =>
@@ -224,6 +287,14 @@ function StudentManager({ form, setForm, submit, students }) {
       ),
     [students]
   );
+  const selectedCount = selectedUids.length;
+  const allSelected = sorted.length > 0 && selectedCount === sorted.length;
+
+  useEffect(() => {
+    setSelectedUids((current) =>
+      current.filter((uid) => sorted.some((student) => student.uid === uid))
+    );
+  }, [sorted]);
 
   async function saveStudentName(student) {
     const nextName = nameDraft.trim();
@@ -233,142 +304,381 @@ function StudentManager({ form, setForm, submit, students }) {
     setNameDraft('');
   }
 
+  async function applyPasswordChange(targetUids, password, successMessage) {
+    const nextPassword = String(password).trim();
+    if (!targetUids.length) {
+      alert('학생을 먼저 선택해 주세요.');
+      return false;
+    }
+    if (nextPassword.length < 6) {
+      alert('비밀번호는 6자 이상이어야 합니다.');
+      return false;
+    }
+
+    try {
+      await setStudentPasswords(targetUids, nextPassword);
+      alert(successMessage);
+      return true;
+    } catch (error) {
+      const code = error?.code || '';
+      const message = code.includes('unimplemented')
+        ? '비밀번호 변경 기능이 아직 배포되지 않았습니다. Firebase Functions 배포 후 다시 시도해 주세요.'
+        : code.includes('permission-denied')
+          ? '선택한 학생 비밀번호를 변경할 권한이 없습니다.'
+          : code.includes('unauthenticated')
+            ? '다시 로그인한 뒤 시도해 주세요.'
+            : error?.message || '비밀번호 변경 중 오류가 발생했습니다.';
+      alert(message);
+      return false;
+    }
+  }
+
+  async function saveStudentPassword(student) {
+    const ok = await applyPasswordChange(
+      [student.uid],
+      passwordDraft,
+      `${student.displayName || student.id} 학생 비밀번호를 변경했습니다.`
+    );
+    if (!ok) return;
+    setPasswordUid(null);
+    setPasswordDraft('');
+  }
+
+  async function applyBatchPassword() {
+    const ok = await applyPasswordChange(
+      selectedUids,
+      batchPassword,
+      `${selectedCount}명의 비밀번호를 일괄 변경했습니다.`
+    );
+    if (!ok) return;
+    setBatchPassword('');
+  }
+
+  function toggleSelected(uid) {
+    setSelectedUids((current) =>
+      current.includes(uid) ? current.filter((item) => item !== uid) : [...current, uid]
+    );
+  }
+
+  function toggleAllSelected() {
+    setSelectedUids(allSelected ? [] : sorted.map((student) => student.uid));
+  }
+
+  async function removeStudent(student) {
+    const ok = window.confirm(
+      `${student.displayName || student.id} 학생을 삭제하면 로그인 계정과 학생 문서가 함께 삭제됩니다. 계속할까요?`
+    );
+    if (!ok) return;
+
+    try {
+      await deleteStudentAccount(student.uid);
+      setSelectedUids((current) => current.filter((uid) => uid !== student.uid));
+    } catch (error) {
+      const code = error?.code || '';
+      const message = code.includes('not-found')
+        ? '이미 삭제된 학생 계정입니다.'
+        : code.includes('unimplemented')
+          ? '학생 완전 삭제 기능이 아직 배포되지 않았습니다. Firebase Functions 배포 후 다시 시도해 주세요.'
+          : code.includes('permission-denied')
+            ? '이 학생을 삭제할 권한이 없습니다.'
+            : code.includes('unauthenticated')
+              ? '다시 로그인한 뒤 시도해 주세요.'
+              : '학생 삭제 중 오류가 발생했습니다.';
+      alert(message);
+    }
+  }
+
   return (
     <div className="grid gap-5 xl:grid-cols-[380px_1fr]">
-      <form onSubmit={submit} className="rounded-[8px] bg-white/90 p-5 shadow-soft">
-        <h2 className="text-xl font-bold">학생 일괄 생성</h2>
-        <div className="mt-5 grid grid-cols-2 gap-4">
-          <Field label="ID 접두어">
-            <input
-              value={form.prefix}
-              onChange={(e) => setForm({ ...form, prefix: e.target.value })}
-              className="h-11 w-full rounded-[8px] border border-stone-200 px-3"
-              placeholder="class_"
-            />
-          </Field>
-          <Field label="비밀번호">
-            <input
-              type="password"
-              minLength={6}
-              autoComplete="new-password"
-              value={form.password}
-              onChange={(e) => setForm({ ...form, password: e.target.value })}
-              className="h-11 w-full rounded-[8px] border border-stone-200 px-3"
-            />
-          </Field>
-          <Field label="시작 번호">
-            <input
-              inputMode="numeric"
-              value={form.start}
-              onChange={(e) =>
-                setForm({ ...form, start: e.target.value.replace(/\D/g, '') || '00' })
-              }
-              className="h-11 w-full rounded-[8px] border border-stone-200 px-3"
-            />
-          </Field>
-          <Field label="끝 번호">
-            <input
-              inputMode="numeric"
-              value={form.end}
-              onChange={(e) =>
-                setForm({ ...form, end: e.target.value.replace(/\D/g, '') || '00' })
-              }
-              className="h-11 w-full rounded-[8px] border border-stone-200 px-3"
-            />
-          </Field>
-        </div>
-        <div className="mt-4">
-          <Field label="학생 이름 목록">
-            <textarea
-              value={form.nameList}
-              onChange={(e) => setForm({ ...form, nameList: e.target.value })}
-              className="min-h-40 w-full rounded-[8px] border border-stone-200 p-3"
-              placeholder={'김학생\n이학생\n박학생'}
-            />
-          </Field>
-        </div>
-        <p className="mt-3 text-sm text-stone-500">
-          시작 번호를 `01`처럼 두 자리로 적으면 생성되는 ID도 같은 자리수로 맞춰집니다.
-        </p>
-        <p className="mt-2 text-sm text-stone-500">
-          엑셀에서 이름 열만 세로로 복붙하면 한 줄당 한 명씩 생성되고, 이름 목록이 있으면 끝 번호보다
-          이름 목록을 우선합니다.
-        </p>
-        <button
-          type="submit"
-          className="mt-5 h-11 w-full rounded-[8px] bg-stone-900 font-bold text-white"
-        >
-          학생 계정 생성
-        </button>
-      </form>
+      <div className="space-y-5">
+        <form onSubmit={submitSingle} className="rounded-[8px] bg-white/90 p-5 shadow-soft">
+          <h2 className="text-xl font-bold">학생 한 명 생성</h2>
+          <div className="mt-5 space-y-4">
+            <Field label="학생 ID">
+              <input
+                value={singleForm.id}
+                onChange={(e) => setSingleForm({ ...singleForm, id: e.target.value })}
+                className="h-11 w-full rounded-[8px] border border-stone-200 px-3"
+                placeholder="mh01"
+              />
+            </Field>
+            <Field label="학생 이름">
+              <input
+                value={singleForm.displayName}
+                onChange={(e) =>
+                  setSingleForm({ ...singleForm, displayName: e.target.value })
+                }
+                className="h-11 w-full rounded-[8px] border border-stone-200 px-3"
+                placeholder="홍길동"
+              />
+            </Field>
+            <Field label="비밀번호">
+              <input
+                type="password"
+                minLength={6}
+                autoComplete="new-password"
+                value={singleForm.password}
+                onChange={(e) =>
+                  setSingleForm({ ...singleForm, password: e.target.value })
+                }
+                className="h-11 w-full rounded-[8px] border border-stone-200 px-3"
+              />
+            </Field>
+          </div>
+          <button
+            type="submit"
+            className="mt-5 h-11 w-full rounded-[8px] bg-stone-900 font-bold text-white"
+          >
+            학생 한 명 생성
+          </button>
+        </form>
+
+        <form onSubmit={submit} className="rounded-[8px] bg-white/90 p-5 shadow-soft">
+          <h2 className="text-xl font-bold">학생 일괄 생성</h2>
+          <div className="mt-5 grid grid-cols-2 gap-4">
+            <Field label="ID 접두어">
+              <input
+                value={form.prefix}
+                onChange={(e) => setForm({ ...form, prefix: e.target.value })}
+                className="h-11 w-full rounded-[8px] border border-stone-200 px-3"
+                placeholder="class_"
+              />
+            </Field>
+            <Field label="비밀번호">
+              <input
+                type="password"
+                minLength={6}
+                autoComplete="new-password"
+                value={form.password}
+                onChange={(e) => setForm({ ...form, password: e.target.value })}
+                className="h-11 w-full rounded-[8px] border border-stone-200 px-3"
+              />
+            </Field>
+            <Field label="시작 번호">
+              <input
+                inputMode="numeric"
+                value={form.start}
+                onChange={(e) =>
+                  setForm({ ...form, start: e.target.value.replace(/\D/g, '') || '00' })
+                }
+                className="h-11 w-full rounded-[8px] border border-stone-200 px-3"
+              />
+            </Field>
+            <Field label="끝 번호">
+              <input
+                inputMode="numeric"
+                value={form.end}
+                onChange={(e) =>
+                  setForm({ ...form, end: e.target.value.replace(/\D/g, '') || '00' })
+                }
+                className="h-11 w-full rounded-[8px] border border-stone-200 px-3"
+              />
+            </Field>
+          </div>
+          <div className="mt-4">
+            <Field label="학생 이름 목록">
+              <textarea
+                value={form.nameList}
+                onChange={(e) => setForm({ ...form, nameList: e.target.value })}
+                className="min-h-40 w-full rounded-[8px] border border-stone-200 p-3"
+                placeholder={'김학생\n이학생\n박학생'}
+              />
+            </Field>
+          </div>
+          <p className="mt-3 text-sm text-stone-500">
+            시작 번호를 `01`처럼 두 자리로 적으면 생성되는 ID도 같은 자리수로 맞춰집니다.
+          </p>
+          <p className="mt-2 text-sm text-stone-500">
+            엑셀에서 이름 열만 세로로 붙여넣으면 줄 수만큼 생성되고, 이름 목록이 있으면 번호 범위보다
+            이름 목록이 우선 적용됩니다.
+          </p>
+          <button
+            type="submit"
+            className="mt-5 h-11 w-full rounded-[8px] bg-stone-900 font-bold text-white"
+          >
+            학생 계정 생성
+          </button>
+        </form>
+      </div>
 
       <section className="rounded-[8px] bg-white/90 p-5 shadow-soft">
-        <div className="flex items-center justify-between">
-          <h2 className="text-xl font-bold">학생 목록</h2>
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <h2 className="text-xl font-bold">학생 목록</h2>
+            <p className="mt-1 text-sm text-stone-500">
+              이름 수정, 개별 비밀번호 변경, 선택 학생 비밀번호 일괄 변경, 삭제를 여기서 처리합니다.
+            </p>
+          </div>
           <button
             type="button"
             onClick={() => window.print()}
-            className="inline-flex items-center gap-2 rounded-[8px] border border-stone-300 px-3 py-2 text-sm font-bold"
+            className="inline-flex items-center gap-2 self-start rounded-[8px] border border-stone-300 px-3 py-2 text-sm font-bold"
           >
             <Printer size={16} />
             인쇄
           </button>
         </div>
-        <div className="mt-4 grid gap-3 md:grid-cols-2">
-          {sorted.map((student) => (
-            <article
-              key={student.uid}
-              className="rounded-[8px] border border-stone-200 bg-lime-50 p-4"
+
+        <div className="mt-5 rounded-[8px] border border-stone-200 bg-stone-50 p-4">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
+            <label className="inline-flex items-center gap-2 text-sm font-bold text-stone-700">
+              <input type="checkbox" checked={allSelected} onChange={toggleAllSelected} />
+              전체 선택
+            </label>
+            <Field label={`선택 학생 ${selectedCount}명 비밀번호 일괄 변경`}>
+              <input
+                type="password"
+                minLength={6}
+                autoComplete="new-password"
+                value={batchPassword}
+                onChange={(e) => setBatchPassword(e.target.value)}
+                className="h-11 w-full rounded-[8px] border border-stone-200 px-3"
+                placeholder="새 비밀번호"
+              />
+            </Field>
+            <button
+              type="button"
+              onClick={applyBatchPassword}
+              disabled={!selectedCount}
+              className="inline-flex h-11 items-center justify-center gap-2 rounded-[8px] bg-stone-900 px-4 font-bold text-white disabled:cursor-not-allowed disabled:bg-stone-300"
             >
-              <div className="flex justify-between gap-3">
-                <div className="min-w-0">
-                  {editingUid === student.uid ? (
-                    <div className="flex gap-2">
-                      <input
-                        value={nameDraft}
-                        onChange={(event) => setNameDraft(event.target.value)}
-                        className="h-10 min-w-0 flex-1 rounded-[8px] border border-stone-200 px-3"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => saveStudentName(student)}
-                        className="rounded-[8px] bg-stone-900 px-3 text-sm font-bold text-white"
-                      >
-                        저장
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-2">
-                      <h3 className="font-bold">{student.displayName || student.id}</h3>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEditingUid(student.uid);
-                          setNameDraft(student.displayName || student.id);
-                        }}
-                        className="rounded-full bg-white p-1.5 text-stone-500 hover:text-stone-900"
-                        aria-label="학생 이름 수정"
-                      >
-                        <Pencil size={14} />
-                      </button>
-                    </div>
-                  )}
-                  <p className="text-sm text-stone-600">{student.id}</p>
-                  <p className="mt-1 text-sm text-stone-600">
-                    비밀번호: {student.passwordHint || '별도 관리'}
-                  </p>
+              <KeyRound size={16} />
+              선택 학생 비밀번호 변경
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
+          {sorted.map((student) => {
+            const isNameEditing = editingUid === student.uid;
+            const isPasswordEditing = passwordUid === student.uid;
+            const isSelected = selectedUids.includes(student.uid);
+
+            return (
+              <article
+                key={student.uid}
+                className="rounded-[8px] border border-stone-200 bg-lime-50 p-4"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <label className="mt-1 inline-flex items-center gap-2 text-sm font-bold text-stone-700">
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => toggleSelected(student.uid)}
+                    />
+                    선택
+                  </label>
+
+                  <div className="min-w-0 flex-1">
+                    {isNameEditing ? (
+                      <div className="flex gap-2">
+                        <input
+                          value={nameDraft}
+                          onChange={(event) => setNameDraft(event.target.value)}
+                          className="h-10 min-w-0 flex-1 rounded-[8px] border border-stone-200 px-3"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => saveStudentName(student)}
+                          className="rounded-[8px] bg-stone-900 px-3 text-sm font-bold text-white"
+                        >
+                          저장
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        <h3 className="font-bold">{student.displayName || student.id}</h3>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingUid(student.uid);
+                            setNameDraft(student.displayName || student.id);
+                          }}
+                          className="rounded-full bg-white p-1.5 text-stone-500 hover:text-stone-900"
+                          aria-label="학생 이름 수정"
+                        >
+                          <Pencil size={14} />
+                        </button>
+                      </div>
+                    )}
+
+                    <p className="mt-1 text-sm text-stone-600">{student.id}</p>
+                    <p className="mt-1 text-sm text-stone-600">
+                      현재 비밀번호: {student.passwordHint || '별도 관리'}
+                    </p>
+
+                    {isPasswordEditing ? (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <input
+                          type="password"
+                          minLength={6}
+                          autoComplete="new-password"
+                          value={passwordDraft}
+                          onChange={(event) => setPasswordDraft(event.target.value)}
+                          className="h-10 min-w-0 flex-1 rounded-[8px] border border-stone-200 px-3"
+                          placeholder="새 비밀번호"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => saveStudentPassword(student)}
+                          className="rounded-[8px] bg-stone-900 px-3 text-sm font-bold text-white"
+                        >
+                          저장
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPasswordUid(null);
+                            setPasswordDraft('');
+                          }}
+                          className="rounded-[8px] border border-stone-300 bg-white px-3 text-sm font-bold text-stone-700"
+                        >
+                          취소
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPasswordUid(student.uid);
+                            setPasswordDraft(student.passwordHint || '');
+                          }}
+                          className="inline-flex items-center gap-1 rounded-[8px] border border-stone-300 bg-white px-3 py-2 text-sm font-bold text-stone-700"
+                        >
+                          <KeyRound size={15} />
+                          개별 비밀번호 변경
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            applyPasswordChange(
+                              [student.uid],
+                              RESET_PASSWORD,
+                              `${student.displayName || student.id} 학생 비밀번호를 ${RESET_PASSWORD}로 초기화했습니다.`
+                            )
+                          }
+                          className="inline-flex items-center gap-1 rounded-[8px] border border-stone-300 bg-white px-3 py-2 text-sm font-bold text-stone-700"
+                        >
+                          <RotateCcw size={15} />
+                          123456 초기화
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => removeStudent(student)}
+                    className="rounded-full bg-white p-2 text-stone-500 hover:text-red-600"
+                    aria-label="학생 삭제"
+                  >
+                    <Trash2 size={16} />
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => deleteDoc(doc(db, 'users', student.uid))}
-                  className="rounded-full bg-white p-2 text-stone-500 hover:text-red-600"
-                  aria-label="학생 삭제"
-                >
-                  <Trash2 size={16} />
-                </button>
-              </div>
-            </article>
-          ))}
+              </article>
+            );
+          })}
           {!sorted.length && (
             <p className="text-sm text-stone-500">생성된 학생 계정이 아직 없습니다.</p>
           )}
@@ -380,10 +690,7 @@ function StudentManager({ form, setForm, submit, students }) {
 
 function WallManager({ form, setForm, submit, walls, origin }) {
   const sortedWalls = useMemo(
-    () =>
-      [...walls].sort(
-        (a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0)
-      ),
+    () => [...walls].sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0)),
     [walls]
   );
 
