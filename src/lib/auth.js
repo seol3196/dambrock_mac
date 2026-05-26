@@ -32,6 +32,10 @@ export function makePassword(length = 8) {
 }
 
 export async function createUser(id, password, role, extraData = {}) {
+  if (String(password).length < 6) {
+    throw new Error('Password must be at least 6 characters.');
+  }
+
   const secondaryApp = initializeApp(firebaseConfig, `secondary-${Date.now()}-${Math.random()}`);
   const secondaryAuth = getAuth(secondaryApp);
 

@@ -35,7 +35,7 @@ export default function CommentBox({ postId }) {
   }
 
   return (
-    <div className="mt-4 rounded-[8px] bg-white/55 p-3">
+    <div className="mt-4 rounded-[8px] bg-white/60 p-3">
       <div className="space-y-2">
         {comments.map((comment) => (
           <div key={comment.id} className="flex items-start justify-between gap-2 text-sm">
@@ -44,7 +44,12 @@ export default function CommentBox({ postId }) {
               <span className="ml-2 text-xs text-stone-500">{dateText(comment.createdAt)}</span>
             </p>
             {user?.uid === comment.authorId && (
-              <button type="button" aria-label="댓글 삭제" onClick={() => deleteComment(comment.id)} className="text-stone-500 hover:text-red-600">
+              <button
+                type="button"
+                aria-label="댓글 삭제"
+                onClick={() => deleteComment(comment.id)}
+                className="text-stone-500 hover:text-red-600"
+              >
                 <Trash2 size={14} />
               </button>
             )}

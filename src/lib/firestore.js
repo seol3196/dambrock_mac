@@ -18,8 +18,18 @@ export const colorOptions = [
   { name: '주황', value: 'bg-orange-100', swatch: '#ffedd5' }
 ];
 
+export const wallBackgroundOptions = [
+  { name: '크림', value: 'bg-[#fff8e8]' },
+  { name: '민트', value: 'bg-[#edf7f2]' },
+  { name: '하늘', value: 'bg-[#eef6ff]' },
+  { name: '라일락', value: 'bg-[#f5efff]' },
+  { name: '피치', value: 'bg-[#fff0ea]' },
+  { name: '모래', value: 'bg-[#f3ead8]' }
+];
+
 export function createWall(data) {
   return addDoc(collection(db, 'walls'), {
+    backgroundTone: wallBackgroundOptions[0].value,
     ...data,
     createdAt: serverTimestamp()
   });
@@ -36,7 +46,15 @@ export function deleteWall(wallId) {
 export function createPost(data) {
   return addDoc(collection(db, 'posts'), {
     ...data,
+    column: data.column || null,
     createdAt: serverTimestamp()
+  });
+}
+
+export function updatePost(postId, data) {
+  return updateDoc(doc(db, 'posts', postId), {
+    ...data,
+    updatedAt: serverTimestamp()
   });
 }
 

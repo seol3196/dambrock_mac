@@ -2,16 +2,22 @@ import { LogOut } from 'lucide-react';
 import { logout } from '../lib/auth';
 
 export default function Layout({ badge, title, userLabel, children, aside }) {
+  const hasAside = Boolean(aside);
+
   return (
     <main className="felt-bg min-h-screen">
       <header className="border-b border-stone-200/80 bg-white/82 backdrop-blur">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-4">
-          <div>
+        <div className="mx-auto flex w-full max-w-[1600px] items-center justify-between gap-4 px-5 py-4">
+          <div className="min-w-0">
             <p className="text-sm font-bold text-amber-700">{badge}</p>
-            <h1 className="text-2xl font-bold text-stone-950">{title}</h1>
+            <h1 className="truncate text-2xl font-bold text-stone-950 sm:text-4xl">{title}</h1>
           </div>
           <div className="flex items-center gap-3">
-            {userLabel && <span className="hidden text-sm text-stone-600 sm:inline">{userLabel}</span>}
+            {userLabel && (
+              <span className="hidden text-sm font-medium text-stone-600 sm:inline">
+                {userLabel}
+              </span>
+            )}
             <button
               type="button"
               onClick={logout}
@@ -23,9 +29,13 @@ export default function Layout({ badge, title, userLabel, children, aside }) {
           </div>
         </div>
       </header>
-      <div className="mx-auto grid max-w-7xl gap-5 px-4 py-5 lg:grid-cols-[220px_1fr]">
-        {aside}
-        <section>{children}</section>
+      <div
+        className={`mx-auto w-full max-w-[1600px] gap-5 px-5 py-6 ${
+          hasAside ? 'grid lg:grid-cols-[220px_minmax(0,1fr)]' : ''
+        }`}
+      >
+        {hasAside ? aside : null}
+        <section className="min-w-0">{children}</section>
       </div>
     </main>
   );

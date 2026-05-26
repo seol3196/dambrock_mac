@@ -1,4 +1,4 @@
-import { Navigate } from 'react-router-dom';
+import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext.jsx';
 import FirebaseNotice from './FirebaseNotice.jsx';
 import LoadingScreen from './LoadingScreen.jsx';
@@ -12,9 +12,10 @@ function roleHome(role) {
 
 export default function ProtectedRoute({ allow, children }) {
   const { loading, user, role } = useAuth();
+  const location = useLocation();
 
   if (loading) return <LoadingScreen />;
-  if (!user) return <Navigate to="/" replace />;
+  if (!user) return <Navigate to="/" replace state={{ from: location }} />;
   if (!role) return <FirebaseNotice />;
   if (!allow.includes(role)) return <Navigate to={roleHome(role)} replace />;
 

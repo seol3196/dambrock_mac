@@ -26,6 +26,16 @@ service cloud.firestore {
       return role() == 'student';
     }
 
+    function isBootstrapAdmin(uid) {
+      return signedIn()
+        && request.auth.uid == uid
+        && request.auth.token.email == 'admin@damvyeorak.local'
+        && !exists(/databases/$(database)/documents/users/$(uid))
+        && request.resource.data.id == 'admin'
+        && request.resource.data.role == 'admin'
+        && request.resource.data.displayName is string;
+    }
+
     function wallDoc(wallId) {
       return get(/databases/$(database)/documents/walls/$(wallId));
     }
@@ -41,7 +51,11 @@ service cloud.firestore {
 
     match /users/{uid} {
       allow read: if signedIn() && (request.auth.uid == uid || isAdmin() || (isTeacher() && resource.data.teacherId == request.auth.uid));
-      allow create, update, delete: if isAdmin() || (isTeacher() && request.resource.data.role == 'student' && request.resource.data.teacherId == request.auth.uid);
+      allow create: if isAdmin()
+        || isBootstrapAdmin(uid)
+        || (isTeacher() && request.resource.data.role == 'student' && request.resource.data.teacherId == request.auth.uid);
+      allow update, delete: if isAdmin()
+        || (isTeacher() && request.resource.data.role == 'student' && request.resource.data.teacherId == request.auth.uid);
     }
 
     match /walls/{wallId} {
@@ -53,7 +67,9 @@ service cloud.firestore {
     match /posts/{postId} {
       allow read: if canReadWall(resource.data.wallId);
       allow create: if canReadWall(request.resource.data.wallId);
-      allow update: if false;
+      allow update: if signedIn()
+        && (resource.data.authorId == request.auth.uid
+          || wallDoc(resource.data.wallId).data.ownerId == request.auth.uid);
       allow delete: if signedIn() && (resource.data.authorId == request.auth.uid || wallDoc(resource.data.wallId).data.ownerId == request.auth.uid);
     }
 

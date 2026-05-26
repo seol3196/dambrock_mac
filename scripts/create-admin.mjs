@@ -1,5 +1,9 @@
 import { initializeApp } from 'firebase/app';
-import { createUserWithEmailAndPassword, getAuth, signInWithEmailAndPassword } from 'firebase/auth';
+import {
+  createUserWithEmailAndPassword,
+  getAuth,
+  signInWithEmailAndPassword
+} from 'firebase/auth';
 import { doc, getFirestore, serverTimestamp, setDoc } from 'firebase/firestore';
 
 const [, , id = 'admin', password] = process.argv;
@@ -58,12 +62,21 @@ try {
     createdAt: serverTimestamp()
   });
   const timeout = new Promise((_, reject) => {
-    setTimeout(() => reject(new Error('Firestore write timed out after 15s. Check that Firestore Database is created.')), 15000);
+    setTimeout(
+      () =>
+        reject(
+          new Error(
+            'Firestore write timed out after 15s. Check that Firestore exists and firestore.rules is deployed.'
+          )
+        ),
+      15000
+    );
   });
   await Promise.race([write, timeout]);
 
   console.log(`Created admin: ${id}`);
   console.log(`UID: ${credential.user.uid}`);
+  console.log('If you still get PERMISSION_DENIED, deploy firestore.rules first.');
   process.exit(0);
 } catch (error) {
   console.error(error.code || error.name || 'error');
