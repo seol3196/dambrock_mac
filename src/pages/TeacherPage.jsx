@@ -4,7 +4,6 @@ import {
   KeyRound,
   Pencil,
   Printer,
-  RotateCcw,
   Settings,
   Trash2,
   Users
@@ -19,6 +18,7 @@ import { createUser } from '../lib/auth';
 import {
   createWall,
   deleteStudentAccount,
+  deleteStudentAccounts,
   deleteWall,
   setStudentPasswords
 } from '../lib/firestore';
@@ -177,22 +177,6 @@ export default function TeacherPage() {
     }
   }
 
-  async function submitWall(event) {
-    event.preventDefault();
-    await createWall({
-      ...wallForm,
-      ownerId: user.uid,
-      ownerName: profile?.displayName || displayId
-    });
-    setWallForm({
-      title: '',
-      description: '',
-      accessMode: 'login',
-      commentsEnabled: true,
-      likesEnabled: true
-    });
-  }
-
   async function createSingleStudent(event) {
     event.preventDefault();
 
@@ -232,6 +216,22 @@ export default function TeacherPage() {
           : error?.message || '학생 계정 생성 중 오류가 발생했습니다.';
       alert(message);
     }
+  }
+
+  async function submitWall(event) {
+    event.preventDefault();
+    await createWall({
+      ...wallForm,
+      ownerId: user.uid,
+      ownerName: profile?.displayName || displayId
+    });
+    setWallForm({
+      title: '',
+      description: '',
+      accessMode: 'login',
+      commentsEnabled: true,
+      likesEnabled: true
+    });
   }
 
   return (
@@ -304,6 +304,25 @@ function StudentManager({
     setNameDraft('');
   }
 
+  function functionErrorMessage(error, fallback) {
+    const code = error?.code || '';
+    const message = String(error?.message || '');
+
+    if (code.includes('unimplemented')) {
+      return 'Firebase Functions가 아직 배포되지 않았습니다. functions 배포 후 다시 시도해 주세요.';
+    }
+    if (code.includes('permission-denied')) {
+      return '권한이 없습니다. 다시 로그인한 뒤 시도해 주세요.';
+    }
+    if (code.includes('unauthenticated')) {
+      return '로그인 상태가 만료되었습니다. 다시 로그인해 주세요.';
+    }
+    if (message.includes('CORS') || message.includes('Failed to fetch')) {
+      return '학생 관리 함수가 아직 배포되지 않았거나 CORS 설정이 반영되지 않았습니다. Firebase Functions를 다시 배포해 주세요.';
+    }
+    return fallback;
+  }
+
   async function applyPasswordChange(targetUids, password, successMessage) {
     const nextPassword = String(password).trim();
     if (!targetUids.length) {
@@ -320,15 +339,7 @@ function StudentManager({
       alert(successMessage);
       return true;
     } catch (error) {
-      const code = error?.code || '';
-      const message = code.includes('unimplemented')
-        ? '비밀번호 변경 기능이 아직 배포되지 않았습니다. Firebase Functions 배포 후 다시 시도해 주세요.'
-        : code.includes('permission-denied')
-          ? '선택한 학생 비밀번호를 변경할 권한이 없습니다.'
-          : code.includes('unauthenticated')
-            ? '다시 로그인한 뒤 시도해 주세요.'
-            : error?.message || '비밀번호 변경 중 오류가 발생했습니다.';
-      alert(message);
+      alert(functionErrorMessage(error, '비밀번호 변경 중 오류가 발생했습니다.'));
       return false;
     }
   }
@@ -373,18 +384,29 @@ function StudentManager({
     try {
       await deleteStudentAccount(student.uid);
       setSelectedUids((current) => current.filter((uid) => uid !== student.uid));
+      alert('학생 계정을 삭제했습니다.');
     } catch (error) {
-      const code = error?.code || '';
-      const message = code.includes('not-found')
-        ? '이미 삭제된 학생 계정입니다.'
-        : code.includes('unimplemented')
-          ? '학생 완전 삭제 기능이 아직 배포되지 않았습니다. Firebase Functions 배포 후 다시 시도해 주세요.'
-          : code.includes('permission-denied')
-            ? '이 학생을 삭제할 권한이 없습니다.'
-            : code.includes('unauthenticated')
-              ? '다시 로그인한 뒤 시도해 주세요.'
-              : '학생 삭제 중 오류가 발생했습니다.';
-      alert(message);
+      alert(functionErrorMessage(error, '학생 삭제 중 오류가 발생했습니다.'));
+    }
+  }
+
+  async function removeSelectedStudents() {
+    if (!selectedCount) {
+      alert('삭제할 학생을 먼저 선택해 주세요.');
+      return;
+    }
+
+    const ok = window.confirm(
+      `선택한 학생 ${selectedCount}명을 삭제하면 로그인 계정과 학생 문서가 함께 삭제됩니다. 계속할까요?`
+    );
+    if (!ok) return;
+
+    try {
+      await deleteStudentAccounts(selectedUids);
+      setSelectedUids([]);
+      alert(`학생 ${selectedCount}명을 삭제했습니다.`);
+    } catch (error) {
+      alert(functionErrorMessage(error, '학생 일괄 삭제 중 오류가 발생했습니다.'));
     }
   }
 
@@ -506,7 +528,7 @@ function StudentManager({
           <div>
             <h2 className="text-xl font-bold">학생 목록</h2>
             <p className="mt-1 text-sm text-stone-500">
-              이름 수정, 개별 비밀번호 변경, 선택 학생 비밀번호 일괄 변경, 삭제를 여기서 처리합니다.
+              이름 수정, 개별 비밀번호 변경, 선택 학생 비밀번호 일괄 변경, 선택 학생 삭제를 여기서 처리합니다.
             </p>
           </div>
           <button
@@ -520,30 +542,41 @@ function StudentManager({
         </div>
 
         <div className="mt-5 rounded-[8px] border border-stone-200 bg-stone-50 p-4">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
-            <label className="inline-flex items-center gap-2 text-sm font-bold text-stone-700">
-              <input type="checkbox" checked={allSelected} onChange={toggleAllSelected} />
-              전체 선택
-            </label>
-            <Field label={`선택 학생 ${selectedCount}명 비밀번호 일괄 변경`}>
-              <input
-                type="password"
-                minLength={6}
-                autoComplete="new-password"
-                value={batchPassword}
-                onChange={(e) => setBatchPassword(e.target.value)}
-                className="h-11 w-full rounded-[8px] border border-stone-200 px-3"
-                placeholder="새 비밀번호"
-              />
-            </Field>
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
+              <label className="inline-flex items-center gap-2 text-sm font-bold text-stone-700">
+                <input type="checkbox" checked={allSelected} onChange={toggleAllSelected} />
+                전체 선택
+              </label>
+              <Field label={`선택 학생 ${selectedCount}명 비밀번호 일괄 변경`}>
+                <input
+                  type="password"
+                  minLength={6}
+                  autoComplete="new-password"
+                  value={batchPassword}
+                  onChange={(e) => setBatchPassword(e.target.value)}
+                  className="h-11 w-full rounded-[8px] border border-stone-200 px-3"
+                  placeholder="새 비밀번호"
+                />
+              </Field>
+              <button
+                type="button"
+                onClick={applyBatchPassword}
+                disabled={!selectedCount}
+                className="inline-flex h-11 items-center justify-center gap-2 rounded-[8px] bg-stone-900 px-4 font-bold text-white disabled:cursor-not-allowed disabled:bg-stone-300"
+              >
+                <KeyRound size={16} />
+                선택 학생 비밀번호 변경
+              </button>
+            </div>
             <button
               type="button"
-              onClick={applyBatchPassword}
+              onClick={removeSelectedStudents}
               disabled={!selectedCount}
-              className="inline-flex h-11 items-center justify-center gap-2 rounded-[8px] bg-stone-900 px-4 font-bold text-white disabled:cursor-not-allowed disabled:bg-stone-300"
+              className="inline-flex h-11 items-center justify-center gap-2 rounded-[8px] border border-red-200 bg-white px-4 font-bold text-red-600 disabled:cursor-not-allowed disabled:border-stone-200 disabled:text-stone-400"
             >
-              <KeyRound size={16} />
-              선택 학생 비밀번호 변경
+              <Trash2 size={16} />
+              선택 학생 일괄 삭제
             </button>
           </div>
         </div>
@@ -648,20 +681,6 @@ function StudentManager({
                         >
                           <KeyRound size={15} />
                           개별 비밀번호 변경
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            applyPasswordChange(
-                              [student.uid],
-                              RESET_PASSWORD,
-                              `${student.displayName || student.id} 학생 비밀번호를 ${RESET_PASSWORD}로 초기화했습니다.`
-                            )
-                          }
-                          className="inline-flex items-center gap-1 rounded-[8px] border border-stone-300 bg-white px-3 py-2 text-sm font-bold text-stone-700"
-                        >
-                          <RotateCcw size={15} />
-                          123456 초기화
                         </button>
                       </div>
                     )}

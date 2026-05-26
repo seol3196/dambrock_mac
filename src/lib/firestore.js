@@ -92,6 +92,11 @@ export async function deleteStudentAccount(studentUid) {
   return callable({ uid: studentUid });
 }
 
+export async function deleteStudentAccounts(studentUids) {
+  const callable = httpsCallable(functions, 'deleteStudentAccounts');
+  return callable({ uids: studentUids });
+}
+
 export async function setStudentPasswords(studentUids, password) {
   const callable = httpsCallable(functions, 'setStudentPasswords');
   return callable({ uids: studentUids, password });

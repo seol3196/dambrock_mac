@@ -17,4 +17,4 @@ export const isFirebaseConfigured = Object.values(firebaseConfig).every(Boolean)
 export const app = isFirebaseConfigured && !getApps().length ? initializeApp(firebaseConfig) : getApps()[0];
 export const auth = app ? getAuth(app) : null;
 export const db = app ? getFirestore(app) : null;
-export const functions = app ? getFunctions(app) : null;
+export const functions = app ? getFunctions(app, 'us-central1') : null;

@@ -5,6 +5,11 @@ const { getFirestore } = require('firebase-admin/firestore');
 
 initializeApp();
 
+const callableOptions = {
+  region: 'us-central1',
+  cors: true
+};
+
 function getTeacherUid(request) {
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'Login required.');
@@ -22,12 +27,12 @@ async function requireTeacher(db, teacherUid) {
 }
 
 async function loadOwnedStudents(db, teacherUid, uids) {
-  const uniqueUids = [...new Set(uids.map((uid) => String(uid || '').trim()).filter(Boolean))];
+  const uniqueUids = [...new Set((uids || []).map((uid) => String(uid || '').trim()).filter(Boolean))];
   if (!uniqueUids.length) {
     throw new HttpsError('invalid-argument', 'At least one student uid is required.');
   }
 
-  const studentDocs = await Promise.all(
+  return Promise.all(
     uniqueUids.map(async (uid) => {
       const ref = db.doc(`users/${uid}`);
       const snap = await ref.get();
@@ -43,20 +48,17 @@ async function loadOwnedStudents(db, teacherUid, uids) {
       return { uid, ref, data };
     })
   );
-
-  return studentDocs;
 }
 
-exports.deleteStudentAccount = onCall(async (request) => {
+exports.deleteStudentAccount = onCall(callableOptions, async (request) => {
   const teacherUid = getTeacherUid(request);
   const db = getFirestore();
   await requireTeacher(db, teacherUid);
 
   const [student] = await loadOwnedStudents(db, teacherUid, [request.data?.uid]);
-  const studentUid = student.uid;
 
   try {
-    await getAuth().deleteUser(studentUid);
+    await getAuth().deleteUser(student.uid);
   } catch (error) {
     if (error?.code !== 'auth/user-not-found') {
       throw new HttpsError('internal', 'Failed to delete auth user.');
@@ -66,12 +68,38 @@ exports.deleteStudentAccount = onCall(async (request) => {
   await student.ref.delete();
 
   return {
-    uid: studentUid,
-    id: student.data.id || null
+    count: 1,
+    deleted: [{ uid: student.uid, id: student.data.id || null }]
   };
 });
 
-exports.setStudentPasswords = onCall(async (request) => {
+exports.deleteStudentAccounts = onCall(callableOptions, async (request) => {
+  const teacherUid = getTeacherUid(request);
+  const db = getFirestore();
+  await requireTeacher(db, teacherUid);
+  const students = await loadOwnedStudents(db, teacherUid, request.data?.uids || []);
+
+  const deleted = [];
+  for (const student of students) {
+    try {
+      await getAuth().deleteUser(student.uid);
+    } catch (error) {
+      if (error?.code !== 'auth/user-not-found') {
+        throw new HttpsError('internal', 'Failed to delete auth user.');
+      }
+    }
+
+    await student.ref.delete();
+    deleted.push({ uid: student.uid, id: student.data.id || null });
+  }
+
+  return {
+    count: deleted.length,
+    deleted
+  };
+});
+
+exports.setStudentPasswords = onCall(callableOptions, async (request) => {
   const teacherUid = getTeacherUid(request);
   const password = String(request.data?.password || '').trim();
   if (password.length < 6) {
