@@ -53,6 +53,21 @@ service cloud.firestore {
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['content', 'updatedAt']);
     }
 
+    function onlyPostLikeChanged() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likedBy', 'likeCount', 'updatedAt']);
+    }
+
+    function validLikeCount() {
+      return request.resource.data.likeCount is int
+        && request.resource.data.likeCount >= 0
+        && request.resource.data.likeCount == request.resource.data.likedBy.keys().size();
+    }
+
+    function onlyOwnLikeChanged() {
+      let previousLikedBy = ('likedBy' in resource.data) ? resource.data.likedBy : {};
+      return request.resource.data.likedBy.diff(previousLikedBy).affectedKeys().hasOnly([request.auth.uid]);
+    }
+
     match /users/{uid} {
       allow read: if signedIn() && (request.auth.uid == uid || isAdmin() || (isTeacher() && resource.data.teacherId == request.auth.uid));
       allow create: if isAdmin()
@@ -77,6 +92,12 @@ service cloud.firestore {
         && (
           wallDoc(resource.data.wallId).data.ownerId == request.auth.uid
           || (resource.data.authorId == request.auth.uid && onlyPostContentChanged())
+          || (
+            wallDoc(resource.data.wallId).data.likesEnabled == true
+            && onlyPostLikeChanged()
+            && validLikeCount()
+            && onlyOwnLikeChanged()
+          )
         );
       allow delete: if signedIn() && (resource.data.authorId == request.auth.uid || wallDoc(resource.data.wallId).data.ownerId == request.auth.uid);
     }

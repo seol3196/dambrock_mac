@@ -55,7 +55,6 @@ export default function WallPage() {
   const [wall, setWall] = useState(null);
   const [wallMissing, setWallMissing] = useState(false);
   const [posts, setPosts] = useState([]);
-  const [likes, setLikes] = useState([]);
   const [modalOpen, setModalOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -160,34 +159,6 @@ export default function WallPage() {
 
     return unsubscribe;
   }, [loading, user, wall, wallId]);
-
-  useEffect(() => {
-    if (!posts.length) {
-      setLikes([]);
-      return undefined;
-    }
-
-    const unsubscribes = posts.map((post) => {
-      const likesQuery = query(collection(db, 'likes'), where('postId', '==', post.id));
-      return onSnapshot(likesQuery, (snapshot) => {
-        setLikes((current) => {
-          const others = current.filter((like) => like.postId !== post.id);
-          return [...others, ...snapshot.docs.map((item) => ({ id: item.id, ...item.data() }))];
-        });
-      });
-    });
-
-    return () => unsubscribes.forEach((unsubscribe) => unsubscribe());
-  }, [posts]);
-
-  const likesByPost = useMemo(() => {
-    const grouped = {};
-    for (const like of likes) {
-      grouped[like.postId] ||= [];
-      grouped[like.postId].push(like);
-    }
-    return grouped;
-  }, [likes]);
 
   const postsByColumn = useMemo(() => {
     const grouped = Object.fromEntries(columnNumbers.map((column) => [column, []]));
@@ -386,7 +357,6 @@ export default function WallPage() {
                       key={post.id}
                       post={post}
                       wall={wall || {}}
-                      likes={likesByPost[post.id] || []}
                       isTeacherView={canManageWall}
                       onDragStart={setDraggingPost}
                       onDragEnd={() => setDraggingPost(null)}

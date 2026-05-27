@@ -4,8 +4,8 @@ import {
   deleteDoc,
   doc,
   getDoc,
+  runTransaction,
   serverTimestamp,
-  setDoc,
   updateDoc,
   writeBatch
 } from 'firebase/firestore';
@@ -50,6 +50,8 @@ export function createPost(data) {
   return addDoc(collection(db, 'posts'), {
     ...data,
     column: data.column || 1,
+    likedBy: {},
+    likeCount: 0,
     order: data.order ?? Date.now(),
     createdAt: serverTimestamp()
   });
@@ -90,15 +92,30 @@ export function deleteComment(commentId) {
 }
 
 export async function toggleLike(postId, userId) {
-  const likeRef = doc(db, 'likes', `${postId}_${userId}`);
-  const snapshot = await getDoc(likeRef);
-  if (snapshot.exists()) {
-    await deleteDoc(likeRef);
-    return false;
-  }
+  const postRef = doc(db, 'posts', postId);
+  return runTransaction(db, async (transaction) => {
+    const snapshot = await transaction.get(postRef);
+    if (!snapshot.exists()) {
+      throw new Error('Post not found.');
+    }
 
-  await setDoc(likeRef, { postId, userId, createdAt: serverTimestamp() });
-  return true;
+    const data = snapshot.data();
+    const likedBy = { ...(data.likedBy || {}) };
+    const liked = Boolean(likedBy[userId]);
+    if (liked) {
+      delete likedBy[userId];
+    } else {
+      likedBy[userId] = true;
+    }
+
+    transaction.update(postRef, {
+      likedBy,
+      likeCount: Math.max(0, (data.likeCount || 0) + (liked ? -1 : 1)),
+      updatedAt: serverTimestamp()
+    });
+
+    return !liked;
+  });
 }
 
 export async function deleteStudentAccount(studentUid) {

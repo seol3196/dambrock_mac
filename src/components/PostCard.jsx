@@ -17,7 +17,6 @@ import CommentBox from './CommentBox.jsx';
 export default function PostCard({
   post,
   wall,
-  likes,
   isTeacherView = false,
   onDragStart,
   onDragEnd,
@@ -27,7 +26,8 @@ export default function PostCard({
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(post.content);
-  const liked = Boolean(user && likes.some((like) => like.userId === user.uid));
+  const liked = Boolean(user && post.likedBy?.[user.uid]);
+  const likeCount = post.likeCount || Object.keys(post.likedBy || {}).length;
   const canDelete =
     user && (post.authorId === user.uid || (role === 'teacher' && wall.ownerId === user.uid));
   const canEdit = Boolean(
@@ -176,7 +176,7 @@ export default function PostCard({
             }`}
           >
             <Heart size={15} fill={liked ? 'currentColor' : 'none'} />
-            {likes.length}
+            {likeCount}
           </button>
         )}
         {wall.commentsEnabled && (
