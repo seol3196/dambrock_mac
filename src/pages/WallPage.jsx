@@ -110,6 +110,7 @@ export default function WallPage() {
   const [posts, setPosts] = useState([]);
   const [modalOpen, setModalOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
+  const [shareMessage, setShareMessage] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [draggingPost, setDraggingPost] = useState(null);
   const [columnNameDrafts, setColumnNameDrafts] = useState({});
@@ -133,13 +134,24 @@ export default function WallPage() {
     [columnCount]
   );
   const sharedColumn = columnNumbers.includes(requestedColumn) ? requestedColumn : null;
+  const displayedColumnNumbers = useMemo(
+    () => (sharedColumn ? [sharedColumn] : columnNumbers),
+    [columnNumbers, sharedColumn]
+  );
+  const displayedColumnCount = displayedColumnNumbers.length;
   const visibleColumns =
-    viewportWidth >= 1280 ? columnCount : viewportWidth >= 768 ? Math.min(columnCount, 2) : 1;
+    sharedColumn ? 1 : viewportWidth >= 1280 ? columnCount : viewportWidth >= 768 ? Math.min(columnCount, 2) : 1;
   const boardGridStyle = useMemo(
-    () => ({
-      gridTemplateColumns: `repeat(${visibleColumns}, minmax(0, 1fr))`
-    }),
-    [visibleColumns]
+    () => {
+      const shouldConstrainColumns = viewportWidth >= 768 && displayedColumnCount <= 2;
+      return {
+        gridTemplateColumns: shouldConstrainColumns
+          ? `repeat(${displayedColumnCount}, minmax(300px, 440px))`
+          : `repeat(${visibleColumns}, minmax(0, 1fr))`,
+        justifyContent: shouldConstrainColumns ? 'center' : 'stretch'
+      };
+    },
+    [displayedColumnCount, viewportWidth, visibleColumns]
   );
   const corkStyle = useMemo(
     () => ({
@@ -242,6 +254,14 @@ export default function WallPage() {
 
     return grouped;
   }, [columnNumbers, posts]);
+  const displayedPostCount = useMemo(
+    () =>
+      displayedColumnNumbers.reduce(
+        (count, column) => count + (postsByColumn[column]?.length || 0),
+        0
+      ),
+    [displayedColumnNumbers, postsByColumn]
+  );
 
   if (!loading && wall?.accessMode === 'login' && !user) {
     return <Navigate to="/" replace state={{ from: location }} />;
@@ -275,8 +295,26 @@ export default function WallPage() {
     return `${shareUrl}?column=${column}`;
   }
 
-  async function copyShareUrl(url = shareUrl) {
-    await navigator.clipboard.writeText(url);
+  async function copyShareUrl(url = shareUrl, label = '링크') {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url);
+      } else {
+        const textarea = document.createElement('textarea');
+        textarea.value = url;
+        textarea.setAttribute('readonly', '');
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
+      }
+      setShareMessage(`${label}를 복사했습니다.`);
+      window.setTimeout(() => setShareMessage(''), 1600);
+    } catch {
+      setShareMessage('복사하지 못했습니다. 링크를 직접 선택해 복사해 주세요.');
+    }
   }
 
   async function saveSettings() {
@@ -449,7 +487,7 @@ export default function WallPage() {
             </div>
           )}
           <div className="grid gap-5" style={boardGridStyle}>
-            {columnNumbers.map((column) => (
+            {displayedColumnNumbers.map((column) => (
               <div
                 key={column}
                 data-testid={`wall-column-${column}`}
@@ -532,7 +570,7 @@ export default function WallPage() {
             ))}
           </div>
 
-          {!posts.length && (
+          {!displayedPostCount && (
             <div className="mt-5 rounded-[16px] border border-dashed border-white/70 bg-white/55 p-10 text-center text-stone-700">
               아직 포스트잇이 없습니다. 첫 글을 남겨보세요.
             </div>
@@ -727,7 +765,17 @@ export default function WallPage() {
 
             <div className="mt-4 rounded-[12px] border border-stone-200 bg-stone-50 p-3 text-sm text-stone-700">
               <p className="font-bold text-stone-900">공유 링크</p>
-              <p className="mt-2 break-all">{shareUrl}</p>
+              <div className="mt-2 flex items-center gap-2">
+                <p className="min-w-0 flex-1 break-all">{shareUrl}</p>
+                <button
+                  type="button"
+                  onClick={() => copyShareUrl(shareUrl, '메인 링크')}
+                  className="inline-flex shrink-0 items-center gap-1 rounded-[8px] bg-stone-900 px-3 py-2 text-xs font-bold text-white"
+                >
+                  <Copy size={13} />
+                  복사
+                </button>
+              </div>
             </div>
 
             <div className="mt-4 rounded-[12px] border border-stone-200 bg-stone-50 p-3">
@@ -748,7 +796,7 @@ export default function WallPage() {
                     </div>
                     <button
                       type="button"
-                      onClick={() => copyShareUrl(columnShareUrl(column))}
+                      onClick={() => copyShareUrl(columnShareUrl(column), `${columnName(wall, column) || `${column}번 컬럼`} 링크`)}
                       className="inline-flex shrink-0 items-center gap-1 rounded-[8px] border border-stone-200 px-2.5 py-1.5 text-xs font-bold text-stone-700 hover:bg-stone-50"
                     >
                       <Copy size={13} />
@@ -759,19 +807,17 @@ export default function WallPage() {
               </div>
             </div>
 
-            <div className="mt-4 grid gap-2 sm:grid-cols-2">
-              <button
-                type="button"
-                onClick={() => copyShareUrl()}
-                className="inline-flex items-center justify-center gap-2 rounded-[10px] bg-stone-900 px-4 py-3 text-sm font-bold text-white"
-              >
-                <Copy size={16} />
-                링크 복사
-              </button>
+            {shareMessage && (
+              <p className="mt-3 rounded-[8px] bg-emerald-50 px-3 py-2 text-sm font-bold text-emerald-700">
+                {shareMessage}
+              </p>
+            )}
+
+            <div className="mt-4">
               <button
                 type="button"
                 onClick={() => setShareOpen(false)}
-                className="inline-flex items-center justify-center gap-2 rounded-[10px] border border-stone-300 px-4 py-3 text-sm font-bold text-stone-700"
+                className="inline-flex w-full items-center justify-center gap-2 rounded-[10px] border border-stone-300 px-4 py-3 text-sm font-bold text-stone-700"
               >
                 <QrCode size={16} />
                 닫기
