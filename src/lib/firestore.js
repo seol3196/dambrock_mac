@@ -1,19 +1,4 @@
-import {
-  addDoc,
-  collection,
-  deleteDoc,
-  doc,
-  getDoc,
-  getDocs,
-  query,
-  runTransaction,
-  serverTimestamp,
-  updateDoc,
-  where,
-  writeBatch
-} from 'firebase/firestore';
-import { httpsCallable } from 'firebase/functions';
-import { db, functions } from './firebase';
+import { apiFetch, subscribe } from './api';
 
 export const colorOptions = [
   { name: '노랑', value: 'bg-yellow-100', swatch: '#fef3c7' },
@@ -32,173 +17,108 @@ export const wallBackgroundOptions = [
   { name: '모래', value: 'bg-[#f3ead8]', swatch: '#c89c67' }
 ];
 
+export function subscribeUsers(params, onValue) {
+  return subscribe('/api/users', params, onValue);
+}
+
+export function subscribeWalls(params, onValue) {
+  return subscribe('/api/walls', params, onValue);
+}
+
+export function subscribeWall(wallId, onValue, onError) {
+  return subscribe(
+    `/api/walls/${wallId}`,
+    {},
+    onValue,
+    {
+      map: (data) => data.wall,
+      onError
+    }
+  );
+}
+
+export function subscribePosts(wallId, onValue, onError) {
+  return subscribe('/api/posts', { wallId }, onValue, { onError });
+}
+
+export function subscribeComments(postId, onValue) {
+  return subscribe('/api/comments', { postId }, onValue);
+}
+
 export function createWall(data) {
-  return addDoc(collection(db, 'walls'), {
-    backgroundTone: wallBackgroundOptions[0].value,
-    columnCount: 4,
-    ...data,
-    createdAt: serverTimestamp()
-  });
+  return apiFetch('/api/walls', { method: 'POST', body: data });
 }
 
 export function updateWall(wallId, data) {
-  return updateDoc(doc(db, 'walls', wallId), data);
+  return apiFetch(`/api/walls/${wallId}`, { method: 'PATCH', body: data });
 }
 
 export function deleteWall(wallId) {
-  return deleteDoc(doc(db, 'walls', wallId));
+  return apiFetch(`/api/walls/${wallId}`, { method: 'DELETE' });
 }
 
 export function createPost(data) {
-  return addDoc(collection(db, 'posts'), {
-    ...data,
-    column: data.column || 1,
-    likedBy: {},
-    likeCount: 0,
-    order: data.order ?? Date.now(),
-    createdAt: serverTimestamp()
+  return apiFetch('/api/posts', {
+    method: 'POST',
+    body: {
+      ...data,
+      column: data.column || 1,
+      order: data.order ?? Date.now()
+    }
   });
 }
 
 export function updatePost(postId, data) {
-  return updateDoc(doc(db, 'posts', postId), {
-    ...data,
-    updatedAt: serverTimestamp()
-  });
+  return apiFetch(`/api/posts/${postId}`, { method: 'PATCH', body: data });
 }
 
 export function deletePost(postId) {
-  return deleteDoc(doc(db, 'posts', postId));
+  return apiFetch(`/api/posts/${postId}`, { method: 'DELETE' });
 }
 
 export function updatePostLayouts(updates) {
-  const batch = writeBatch(db);
-  for (const update of updates) {
-    batch.update(doc(db, 'posts', update.id), {
-      column: update.column,
-      order: update.order,
-      updatedAt: serverTimestamp()
-    });
-  }
-  return batch.commit();
+  return apiFetch('/api/posts/layouts', { method: 'POST', body: { updates } });
 }
 
-export async function deleteWallColumn(wallId, column, columnCount, columnNames = {}) {
-  const postsQuery = query(collection(db, 'posts'), where('wallId', '==', wallId));
-  const postsSnapshot = await getDocs(postsQuery);
-  const posts = postsSnapshot.docs.map((postDoc) => ({ id: postDoc.id, ...postDoc.data() }));
-  const deletedPosts = posts.filter((post) => post.column === column);
-  const shiftedPosts = posts.filter((post) => post.column > column);
-  const batches = [writeBatch(db)];
-  let batchOperationCount = 0;
-
-  function activeBatch() {
-    if (batchOperationCount >= 450) {
-      batches.push(writeBatch(db));
-      batchOperationCount = 0;
-    }
-    batchOperationCount += 1;
-    return batches[batches.length - 1];
-  }
-
-  for (const post of deletedPosts) {
-    const commentsQuery = query(collection(db, 'comments'), where('postId', '==', post.id));
-    const commentsSnapshot = await getDocs(commentsQuery);
-    commentsSnapshot.docs.forEach((commentDoc) => {
-      activeBatch().delete(doc(db, 'comments', commentDoc.id));
-    });
-    activeBatch().delete(doc(db, 'posts', post.id));
-  }
-
-  for (const post of shiftedPosts) {
-    activeBatch().update(doc(db, 'posts', post.id), {
-      column: post.column - 1,
-      updatedAt: serverTimestamp()
-    });
-  }
-
-  const nextColumnNames = {};
-  for (let nextColumn = 1; nextColumn < columnCount; nextColumn += 1) {
-    const name = nextColumn < column ? columnNames[nextColumn] : columnNames[nextColumn + 1];
-    if (typeof name === 'string' && name.trim()) {
-      nextColumnNames[nextColumn] = name.trim();
-    }
-  }
-
-  activeBatch().update(doc(db, 'walls', wallId), {
-    columnCount: columnCount - 1,
-    columnNames: nextColumnNames
+export function deleteWallColumn(wallId, column, columnCount, columnNames = {}) {
+  return apiFetch(`/api/walls/${wallId}/delete-column`, {
+    method: 'POST',
+    body: { column, columnCount, columnNames }
   });
-
-  for (const batch of batches) {
-    await batch.commit();
-  }
 }
 
 export function createComment(data) {
-  return addDoc(collection(db, 'comments'), {
-    ...data,
-    createdAt: serverTimestamp()
-  });
+  return apiFetch('/api/comments', { method: 'POST', body: data });
 }
 
 export function deleteComment(commentId) {
-  return deleteDoc(doc(db, 'comments', commentId));
+  return apiFetch(`/api/comments/${commentId}`, { method: 'DELETE' });
 }
 
-export async function toggleLike(postId, userId) {
-  const postRef = doc(db, 'posts', postId);
-  return runTransaction(db, async (transaction) => {
-    const snapshot = await transaction.get(postRef);
-    if (!snapshot.exists()) {
-      throw new Error('Post not found.');
-    }
-
-    const data = snapshot.data();
-    const likedBy = { ...(data.likedBy || {}) };
-    const liked = Boolean(likedBy[userId]);
-    if (liked) {
-      delete likedBy[userId];
-    } else {
-      likedBy[userId] = true;
-    }
-
-    transaction.update(postRef, {
-      likedBy,
-      likeCount: Math.max(0, (data.likeCount || 0) + (liked ? -1 : 1)),
-      updatedAt: serverTimestamp()
-    });
-
-    return !liked;
-  });
+export function toggleLike(postId) {
+  return apiFetch(`/api/posts/${postId}/toggle-like`, { method: 'POST' });
 }
 
-export async function deleteStudentAccount(studentUid) {
-  const callable = httpsCallable(functions, 'deleteStudentAccount');
-  try {
-    return await callable({ uid: studentUid });
-  } catch (error) {
-    await deleteDoc(doc(db, 'users', studentUid));
-    return { data: { count: 1, deleted: [{ uid: studentUid, authDeleted: false }] } };
-  }
+export function updateUser(uid, data) {
+  return apiFetch(`/api/users/${uid}`, { method: 'PATCH', body: data });
+}
+
+export function deleteUser(uid) {
+  return apiFetch(`/api/users/${uid}`, { method: 'DELETE' });
+}
+
+export function deleteStudentAccount(studentUid) {
+  return deleteUser(studentUid);
 }
 
 export async function deleteStudentAccounts(studentUids) {
-  const callable = httpsCallable(functions, 'deleteStudentAccounts');
-  try {
-    return await callable({ uids: studentUids });
-  } catch (error) {
-    await Promise.all(studentUids.map((uid) => deleteDoc(doc(db, 'users', uid))));
-    return {
-      data: {
-        count: studentUids.length,
-        deleted: studentUids.map((uid) => ({ uid, authDeleted: false }))
-      }
-    };
-  }
+  const results = await Promise.all(studentUids.map((uid) => deleteUser(uid)));
+  return { data: { count: results.length, deleted: studentUids.map((uid) => ({ uid })) } };
 }
 
-export async function setStudentPasswords(studentUids, password) {
-  const callable = httpsCallable(functions, 'setStudentPasswords');
-  return callable({ uids: studentUids, password });
+export function setStudentPasswords(studentUids, password) {
+  return apiFetch('/api/users/passwords', {
+    method: 'POST',
+    body: { uids: studentUids, password }
+  });
 }

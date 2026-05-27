@@ -44,7 +44,7 @@ export default function PostCard({
       alert('로그인이 필요합니다.');
       return;
     }
-    await toggleLike(post.id, user.uid);
+    await toggleLike(post.id);
   }
 
   async function saveEdit() {

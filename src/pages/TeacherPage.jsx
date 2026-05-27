@@ -9,7 +9,6 @@ import {
   Users
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { collection, doc, onSnapshot, query, updateDoc, where } from 'firebase/firestore';
 import { Link } from 'react-router-dom';
 import Field from '../components/Field.jsx';
 import Layout from '../components/Layout.jsx';
@@ -20,9 +19,11 @@ import {
   deleteStudentAccount,
   deleteStudentAccounts,
   deleteWall,
-  setStudentPasswords
+  setStudentPasswords,
+  subscribeUsers,
+  subscribeWalls,
+  updateUser
 } from '../lib/firestore';
-import { db } from '../lib/firebase';
 import { dateText, paddedNumber, wallTone } from '../lib/ui';
 
 const RESET_PASSWORD = '123456';
@@ -54,19 +55,11 @@ export default function TeacherPage() {
   const origin = typeof window === 'undefined' ? '' : window.location.origin;
 
   useEffect(() => {
-    const studentsQuery = query(
-      collection(db, 'users'),
-      where('role', '==', 'student'),
-      where('teacherId', '==', user.uid)
+    const unsubStudents = subscribeUsers(
+      { role: 'student', teacherId: user.uid },
+      setStudents
     );
-    const wallsQuery = query(collection(db, 'walls'), where('ownerId', '==', user.uid));
-
-    const unsubStudents = onSnapshot(studentsQuery, (snapshot) => {
-      setStudents(snapshot.docs.map((item) => ({ uid: item.id, ...item.data() })));
-    });
-    const unsubWalls = onSnapshot(wallsQuery, (snapshot) => {
-      setWalls(snapshot.docs.map((item) => ({ id: item.id, ...item.data() })));
-    });
+    const unsubWalls = subscribeWalls({ ownerId: user.uid }, setWalls);
 
     return () => {
       unsubStudents();
@@ -299,7 +292,7 @@ function StudentManager({
   async function saveStudentName(student) {
     const nextName = nameDraft.trim();
     if (!nextName) return;
-    await updateDoc(doc(db, 'users', student.uid), { displayName: nextName });
+    await updateUser(student.uid, { displayName: nextName });
     setEditingUid(null);
     setNameDraft('');
   }
@@ -308,8 +301,8 @@ function StudentManager({
     const code = error?.code || '';
     const message = String(error?.message || '');
 
-    if (code.includes('unimplemented')) {
-      return 'Firebase Functions가 아직 배포되지 않았습니다. functions 배포 후 다시 시도해 주세요.';
+    if (code.includes('unimplemented') || code.includes('request-failed')) {
+      return '로컬 서버 요청을 처리하지 못했습니다. 서버 실행 상태를 확인해 주세요.';
     }
     if (code.includes('permission-denied')) {
       return '권한이 없습니다. 다시 로그인한 뒤 시도해 주세요.';
@@ -318,7 +311,7 @@ function StudentManager({
       return '로그인 상태가 만료되었습니다. 다시 로그인해 주세요.';
     }
     if (message.includes('CORS') || message.includes('Failed to fetch')) {
-      return '학생 관리 함수가 아직 배포되지 않았거나 CORS 설정이 반영되지 않았습니다. Firebase Functions를 다시 배포해 주세요.';
+      return '로컬 API 서버에 연결하지 못했습니다. 서버 포트와 실행 상태를 확인해 주세요.';
     }
     return fallback;
   }
@@ -542,38 +535,36 @@ function StudentManager({
         </div>
 
         <div className="mt-5 rounded-[8px] border border-stone-200 bg-stone-50 p-4">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
-              <label className="inline-flex items-center gap-2 text-sm font-bold text-stone-700">
-                <input type="checkbox" checked={allSelected} onChange={toggleAllSelected} />
-                전체 선택
-              </label>
-              <Field label={`선택 학생 ${selectedCount}명 비밀번호 일괄 변경`}>
-                <input
-                  type="password"
-                  minLength={6}
-                  autoComplete="new-password"
-                  value={batchPassword}
-                  onChange={(e) => setBatchPassword(e.target.value)}
-                  className="h-11 w-full rounded-[8px] border border-stone-200 px-3"
-                  placeholder="새 비밀번호"
-                />
-              </Field>
-              <button
-                type="button"
-                onClick={applyBatchPassword}
-                disabled={!selectedCount}
-                className="inline-flex h-11 items-center justify-center gap-2 rounded-[8px] bg-stone-900 px-4 font-bold text-white disabled:cursor-not-allowed disabled:bg-stone-300"
-              >
-                <KeyRound size={16} />
-                선택 학생 비밀번호 변경
-              </button>
-            </div>
+          <div className="grid gap-3 xl:grid-cols-[auto_minmax(220px,1fr)_max-content_max-content] xl:items-end">
+            <label className="inline-flex h-11 items-center gap-2 whitespace-nowrap text-sm font-bold text-stone-700">
+              <input type="checkbox" checked={allSelected} onChange={toggleAllSelected} />
+              전체 선택
+            </label>
+            <Field label={`선택 학생 ${selectedCount}명 비밀번호 일괄 변경`}>
+              <input
+                type="password"
+                minLength={6}
+                autoComplete="new-password"
+                value={batchPassword}
+                onChange={(e) => setBatchPassword(e.target.value)}
+                className="h-11 w-full rounded-[8px] border border-stone-200 px-3"
+                placeholder="새 비밀번호"
+              />
+            </Field>
+            <button
+              type="button"
+              onClick={applyBatchPassword}
+              disabled={!selectedCount}
+              className="inline-flex h-11 items-center justify-center gap-2 whitespace-nowrap rounded-[8px] bg-stone-900 px-4 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-stone-300"
+            >
+              <KeyRound size={16} />
+              선택 학생 비밀번호 변경
+            </button>
             <button
               type="button"
               onClick={removeSelectedStudents}
               disabled={!selectedCount}
-              className="inline-flex h-11 items-center justify-center gap-2 rounded-[8px] border border-red-200 bg-white px-4 font-bold text-red-600 disabled:cursor-not-allowed disabled:border-stone-200 disabled:text-stone-400"
+              className="inline-flex h-11 items-center justify-center gap-2 whitespace-nowrap rounded-[8px] border border-red-200 bg-white px-4 text-sm font-bold text-red-600 disabled:cursor-not-allowed disabled:border-stone-200 disabled:text-stone-400"
             >
               <Trash2 size={16} />
               선택 학생 일괄 삭제
@@ -709,7 +700,7 @@ function StudentManager({
 
 function WallManager({ form, setForm, submit, walls, origin }) {
   const sortedWalls = useMemo(
-    () => [...walls].sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0)),
+    () => [...walls].sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0)),
     [walls]
   );
 

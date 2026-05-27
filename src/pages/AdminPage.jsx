@@ -1,11 +1,10 @@
 import { Trash2, Wand2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { collection, deleteDoc, doc, onSnapshot, query, where } from 'firebase/firestore';
 import Field from '../components/Field.jsx';
 import Layout from '../components/Layout.jsx';
 import { useAuth } from '../contexts/AuthContext.jsx';
 import { createUser, makePassword } from '../lib/auth';
-import { db } from '../lib/firebase';
+import { deleteUser, subscribeUsers } from '../lib/firestore';
 import { dateText } from '../lib/ui';
 
 export default function AdminPage() {
@@ -19,10 +18,7 @@ export default function AdminPage() {
   const [message, setMessage] = useState('');
 
   useEffect(() => {
-    const q = query(collection(db, 'users'), where('role', '==', 'teacher'));
-    return onSnapshot(q, (snapshot) =>
-      setTeachers(snapshot.docs.map((item) => ({ uid: item.id, ...item.data() })))
-    );
+    return subscribeUsers({ role: 'teacher' }, setTeachers);
   }, []);
 
   async function submit(event) {
@@ -108,7 +104,7 @@ export default function AdminPage() {
                   </div>
                   <button
                     type="button"
-                    onClick={() => deleteDoc(doc(db, 'users', teacher.uid))}
+                    onClick={() => deleteUser(teacher.uid)}
                     className="rounded-full bg-white p-2 text-stone-500 hover:text-red-600"
                     aria-label="교사 삭제"
                   >

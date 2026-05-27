@@ -4,15 +4,19 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --host 0.0.0.0 --port 47832",
+    "dev:server": "node server/index.js",
     "build": "vite build",
-    "create-admin": "node --env-file=.env scripts/create-admin.mjs",
-    "deploy:functions": "npx firebase-tools deploy --only functions --project dambrock",
-    "preview": "vite preview"
+    "create-admin": "node scripts/create-admin.mjs",
+    "smoke": "node smoke-test.mjs",
+    "start": "node server/index.js",
+    "preview": "npm run build && npm run start"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^4.3.4",
-    "firebase": "^11.1.0",
+    "bcryptjs": "^3.0.3",
+    "better-sqlite3": "^12.10.0",
+    "express": "^5.2.1",
     "lucide-react": "^0.468.0",
     "qrcode.react": "^4.2.0",
     "react": "^18.3.1",

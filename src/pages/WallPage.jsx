@@ -10,7 +10,6 @@ import {
   X
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { collection, doc, onSnapshot, query, where } from 'firebase/firestore';
 import { QRCodeSVG } from 'qrcode.react';
 import { Link, Navigate, useLocation, useParams } from 'react-router-dom';
 import PostCard from '../components/PostCard.jsx';
@@ -19,11 +18,12 @@ import {
   colorOptions,
   createPost,
   deleteWallColumn,
+  subscribePosts,
+  subscribeWall,
   updatePostLayouts,
   updateWall,
   wallBackgroundOptions
 } from '../lib/firestore';
-import { db } from '../lib/firebase';
 
 function homePath(role) {
   if (role === 'teacher') return '/teacher';
@@ -49,7 +49,20 @@ function postSortValue(post, fallbackOrder) {
 }
 
 function columnName(wall, column) {
-  return wall?.columnNames?.[column] || '';
+  const name = wall?.columnNames?.[column] || '';
+  const trimmedName = String(name).trim();
+  if (
+    trimmedName === String(column) ||
+    trimmedName === `${column}번` ||
+    trimmedName === `${column}번 컬럼`
+  ) {
+    return '';
+  }
+  return name;
+}
+
+function columnTitle(wall, column) {
+  return columnName(wall, column) || `${column}번 컬럼`;
 }
 
 function nextPostPlacement(postsByColumn, columnNumbers) {
@@ -100,6 +113,7 @@ export default function WallPage() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [draggingPost, setDraggingPost] = useState(null);
   const [columnNameDrafts, setColumnNameDrafts] = useState({});
+  const [editingColumnName, setEditingColumnName] = useState(null);
   const [wallError, setWallError] = useState('');
   const [viewportWidth, setViewportWidth] = useState(
     typeof window === 'undefined' ? 1600 : window.innerWidth
@@ -145,16 +159,21 @@ export default function WallPage() {
   useEffect(() => {
     if (loading) return undefined;
 
-    const unsubscribe = onSnapshot(
-      doc(db, 'walls', wallId),
-      (snapshot) => {
+    const unsubscribe = subscribeWall(
+      wallId,
+      (nextWall) => {
         setWallError('');
-        setWallMissing(!snapshot.exists());
-        const nextWall = snapshot.exists() ? { id: snapshot.id, ...snapshot.data() } : null;
+        setWallMissing(false);
         setWall(nextWall);
 
         if (nextWall) {
-          setColumnNameDrafts(nextWall.columnNames || {});
+          setColumnNameDrafts((currentDrafts) => {
+            if (!editingColumnName) return nextWall.columnNames || {};
+            return {
+              ...(nextWall.columnNames || {}),
+              [editingColumnName]: currentDrafts[editingColumnName] ?? nextWall.columnNames?.[editingColumnName] ?? ''
+            };
+          });
           setSettingsForm({
             title: nextWall.title || '',
             description: nextWall.description || '',
@@ -167,36 +186,34 @@ export default function WallPage() {
       },
       (error) => {
         setWall(null);
-        setWallMissing(false);
-        setWallError(error?.code === 'permission-denied' ? 'permission-denied' : 'load-failed');
+        setWallMissing(error?.status === 404);
+        setWallError(error?.status === 401 || error?.status === 403 ? 'permission-denied' : 'load-failed');
       }
     );
 
     return unsubscribe;
-  }, [loading, wallId]);
+  }, [editingColumnName, loading, wallId]);
 
   useEffect(() => {
     if (loading || !wall) return undefined;
     if (wall.accessMode === 'login' && !user) return undefined;
 
-    const postsQuery = query(collection(db, 'posts'), where('wallId', '==', wallId));
-    const unsubscribe = onSnapshot(
-      postsQuery,
-      (snapshot) => {
+    const unsubscribe = subscribePosts(
+      wallId,
+      (items) => {
         setWallError('');
         setPosts(
-          snapshot.docs
-            .map((item) => ({ id: item.id, ...item.data() }))
+          items
             .sort((a, b) => {
-              const aOrder = postSortValue(a, -(a.createdAt?.seconds || 0));
-              const bOrder = postSortValue(b, -(b.createdAt?.seconds || 0));
+              const aOrder = postSortValue(a, -new Date(a.createdAt || 0).getTime());
+              const bOrder = postSortValue(b, -new Date(b.createdAt || 0).getTime());
               return aOrder - bOrder;
             })
         );
       },
       (error) => {
         setPosts([]);
-        setWallError(error?.code === 'permission-denied' ? 'permission-denied' : 'load-failed');
+        setWallError(error?.status === 401 || error?.status === 403 ? 'permission-denied' : 'load-failed');
       }
     );
 
@@ -217,8 +234,8 @@ export default function WallPage() {
 
     for (const column of columnNumbers) {
       grouped[column].sort((a, b) => {
-        const aOrder = postSortValue(a, -(a.createdAt?.seconds || 0));
-        const bOrder = postSortValue(b, -(b.createdAt?.seconds || 0));
+        const aOrder = postSortValue(a, -new Date(a.createdAt || 0).getTime());
+        const bOrder = postSortValue(b, -new Date(b.createdAt || 0).getTime());
         return aOrder - bOrder;
       });
     }
@@ -292,6 +309,7 @@ export default function WallPage() {
     }
 
     setColumnNameDrafts(nextColumnNames);
+    setEditingColumnName(null);
     if (nextName === currentName) return;
 
     await updateWall(wallId, {
@@ -448,44 +466,51 @@ export default function WallPage() {
                     : ''
                 }`}
               >
-                <div className="mb-3 flex min-h-10 items-center gap-2 px-1">
+                <div className="mb-4 px-1">
                   {canManageWall ? (
-                    <input
-                      value={columnNameDrafts[column] ?? columnName(wall, column)}
-                      onChange={(event) =>
-                        setColumnNameDrafts((drafts) => ({
-                          ...drafts,
-                          [column]: event.target.value
-                        }))
-                      }
-                      onBlur={() => saveColumnName(column)}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter') {
-                          event.currentTarget.blur();
+                    <div className="flex min-h-12 items-center gap-2 rounded-[10px] border border-white/75 bg-white/68 px-3 py-2 shadow-sm backdrop-blur-[2px]">
+                      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-amber-100 text-sm font-black text-stone-800 shadow-inner">
+                        {column}
+                      </span>
+                      <input
+                        value={columnNameDrafts[column] ?? columnName(wall, column)}
+                        onChange={(event) =>
+                          setColumnNameDrafts((drafts) => ({
+                            ...drafts,
+                            [column]: event.target.value
+                          }))
                         }
-                      }}
-                      maxLength={24}
-                      placeholder={'\uCEEC\uB7FC\uBA85 \uC785\uB825'}
-                      className="min-w-0 flex-1 rounded-[8px] border border-transparent bg-white/60 px-3 py-2 text-sm font-bold text-stone-800 outline-none transition hover:bg-white/75 focus:border-stone-300 focus:bg-white"
-                    />
+                        onBlur={() => saveColumnName(column)}
+                        onFocus={() => setEditingColumnName(column)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') {
+                            event.currentTarget.blur();
+                          }
+                        }}
+                        maxLength={24}
+                        placeholder={`${column}번 컬럼`}
+                        className="min-w-0 flex-1 bg-transparent text-base font-extrabold text-stone-900 outline-none placeholder:text-stone-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => removeColumn(column)}
+                        aria-label={'\uCEEC\uB7FC \uC0AD\uC81C'}
+                        className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-stone-500 transition hover:bg-white/70 hover:text-red-600"
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    </div>
                   ) : columnName(wall, column) ? (
-                    <h2 className="min-w-0 flex-1 truncate px-1 text-sm font-bold text-stone-800">
-                      <span className="inline-block max-w-full truncate rounded-[8px] bg-white/50 px-3 py-2">
-                        {columnName(wall, column)}
+                    <h2 className="flex min-h-12 items-center gap-2 rounded-[10px] border border-white/75 bg-white/68 px-3 py-2 text-stone-900 shadow-sm backdrop-blur-[2px]">
+                      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-amber-100 text-sm font-black text-stone-800 shadow-inner">
+                        {column}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate text-base font-extrabold">
+                        {columnTitle(wall, column)}
                       </span>
                     </h2>
                   ) : (
-                    <div className="min-w-0 flex-1" />
-                  )}
-                  {canManageWall && (
-                    <button
-                      type="button"
-                      onClick={() => removeColumn(column)}
-                      aria-label={'\uCEEC\uB7FC \uC0AD\uC81C'}
-                      className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-stone-500 transition hover:bg-white/70 hover:text-red-600"
-                    >
-                      <Trash2 size={15} />
-                    </button>
+                    <div className="min-h-12" />
                   )}
                 </div>
                 <div className="space-y-4">

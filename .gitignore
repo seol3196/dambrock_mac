@@ -4,3 +4,6 @@ dist
 .env.local
 .codex-logs/
 .DS_Store
+data/*.sqlite
+data/*.sqlite-*
+스크린샷 *.png

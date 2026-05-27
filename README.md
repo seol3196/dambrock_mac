@@ -1,52 +1,72 @@
 # 담벼락
 
-초등 학급에서 교사와 학생이 짧은 글, 댓글, 좋아요를 실시간으로 나누는 React + Firebase 담벼락 앱입니다.
+맥미니에서 실행하는 React + SQLite 학급 담벼락 앱입니다.
 
 ## 기술 스택
 
 - React + Vite
-- Firebase Authentication
-- Cloud Firestore
+- Node.js + Express
+- SQLite (`better-sqlite3`)
 - React Router
 - Tailwind CSS
-- Netlify 배포 설정
 
-## 로컬 실행
+## 포트
+
+기본 실행 포트는 `47831`입니다.
+
+서버 시작 시 해당 포트가 이미 사용 중이면 `47832`, `47833`처럼 다음 포트를 자동으로 시도합니다. 현재 맥미니에서 흔히 쓰이는 `3000`, `3001`, `5173` 같은 포트와 겹치지 않도록 기본값을 높게 잡았습니다.
+
+원하는 포트가 있으면 아래처럼 지정할 수 있습니다.
+
+```bash
+PORT=47840 npm start
+```
+
+## 설치 및 실행
 
 ```bash
 npm install
-cp .env.example .env
-npm run dev
+npm run build
+npm start
 ```
 
-`.env`에는 Firebase 콘솔에서 만든 웹 앱 설정값을 넣습니다.
+브라우저에서 서버 로그에 표시되는 주소로 접속합니다. 기본값은 다음과 같습니다.
 
-## Firebase 설정
+```text
+http://localhost:47831
+```
 
-1. Firebase 프로젝트를 만듭니다.
-2. Authentication에서 이메일/비밀번호 로그인을 활성화합니다.
-3. Firestore Database를 생성합니다.
-4. 웹 앱을 추가하고 `.env`에 설정값을 복사합니다.
-5. `firestore.rules`를 Firebase 콘솔 또는 CLI로 배포합니다.
+SQLite 파일은 기본적으로 `data/dambrock.sqlite`에 만들어집니다. 다른 위치를 쓰려면 `SQLITE_PATH`를 지정합니다.
+
+```bash
+SQLITE_PATH=/Users/seoljaeho/data/dambrock.sqlite npm start
+```
 
 ## 초기 관리자 계정
 
-Firebase 콘솔에서 직접 만듭니다.
+DB가 비어 있으면 서버가 자동으로 관리자 계정을 만듭니다.
 
-1. Authentication에서 `admin@damvyeorak.local` 계정을 생성합니다.
-2. 생성된 uid를 확인합니다.
-3. Firestore `users/{uid}` 문서를 추가합니다.
-
-```json
-{
-  "id": "admin",
-  "role": "admin",
-  "displayName": "관리자",
-  "createdAt": "server timestamp"
-}
+```text
+ID: admin
+PW: admin123
 ```
 
-앱 로그인 화면에서는 이메일이 아니라 `admin`을 ID로 입력합니다.
+운영 전에 비밀번호를 바꾸는 것을 권장합니다.
+
+```bash
+npm run create-admin -- admin 새비밀번호 관리자
+```
+
+## 개발 실행
+
+API 서버와 Vite 개발 서버를 각각 실행합니다.
+
+```bash
+npm run dev:server
+npm run dev
+```
+
+개발 서버 주소는 `http://localhost:47832`이고, `/api` 요청은 `47831`의 로컬 API 서버로 프록시됩니다.
 
 ## 사용 흐름
 
@@ -54,17 +74,3 @@ Firebase 콘솔에서 직접 만듭니다.
 교사는 `/teacher`에서 학생 계정을 일괄 발급하고 담벼락을 만듭니다.
 학생은 `/student`에서 교사가 만든 담벼락에 들어가 글을 남깁니다.
 공개 담벼락은 `/wall/:wallId` 링크만 있으면 로그인 없이 읽고 작성할 수 있습니다.
-
-## Netlify 배포
-
-Netlify에서 빌드 명령은 `npm run build`, 배포 폴더는 `dist`로 설정합니다.
-SPA 라우팅은 `netlify.toml`의 redirect 설정으로 처리됩니다.
-환경 변수는 Netlify 대시보드의 Site configuration > Environment variables에 등록합니다.
-
-## 보안 규칙 배포
-
-Firebase CLI를 사용할 경우:
-
-```bash
-firebase deploy --only firestore:rules
-```

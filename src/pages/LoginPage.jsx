@@ -1,10 +1,8 @@
 import { Lock, LogIn, UserRound } from 'lucide-react';
 import { useState } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
-import FirebaseNotice from '../components/FirebaseNotice.jsx';
 import { useAuth } from '../contexts/AuthContext.jsx';
 import { login } from '../lib/auth';
-import { isFirebaseConfigured } from '../lib/firebase';
 
 function homeFor(role) {
   if (role === 'admin') return '/admin';
@@ -24,7 +22,6 @@ export default function LoginPage() {
   const fromPath = location.state?.from?.pathname;
   const redirectTo = fromPath || homeFor(role);
 
-  if (!isFirebaseConfigured) return <FirebaseNotice />;
   if (!loading && user && role) return <Navigate to={redirectTo} replace />;
 
   async function submit(event) {
@@ -32,8 +29,10 @@ export default function LoginPage() {
     setError('');
 
     try {
-      await login(id, password);
-      navigate(fromPath || '/student', { replace: true });
+      const result = await login(id, password);
+      const nextRole = result.profile?.role;
+      const nextPath = fromPath || homeFor(nextRole);
+      navigate(nextPath, { replace: true });
     } catch {
       setError('ID 또는 비밀번호를 확인해 주세요.');
     }

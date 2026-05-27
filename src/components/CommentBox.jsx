@@ -1,9 +1,7 @@
 import { Send, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { useAuth } from '../contexts/AuthContext.jsx';
-import { createComment, deleteComment } from '../lib/firestore';
-import { db } from '../lib/firebase';
+import { createComment, deleteComment, subscribeComments } from '../lib/firestore';
 import { dateText } from '../lib/ui';
 
 export default function CommentBox({ postId }) {
@@ -12,12 +10,9 @@ export default function CommentBox({ postId }) {
   const [text, setText] = useState('');
 
   useEffect(() => {
-    const q = query(collection(db, 'comments'), where('postId', '==', postId));
-    return onSnapshot(q, (snapshot) => {
+    return subscribeComments(postId, (items) => {
       setComments(
-        snapshot.docs
-          .map((item) => ({ id: item.id, ...item.data() }))
-          .sort((a, b) => (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0))
+        items.sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0))
       );
     });
   }, [postId]);

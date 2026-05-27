@@ -1,11 +1,21 @@
 export function dateText(value) {
-  if (!value?.toDate) return '';
+  if (!value) return '';
+  if (value?.toDate) {
+    return new Intl.DateTimeFormat('ko-KR', {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    }).format(value.toDate());
+  }
+  const date = typeof value === 'string' || typeof value === 'number' ? new Date(value) : null;
+  if (!date || Number.isNaN(date.getTime())) return '';
   return new Intl.DateTimeFormat('ko-KR', {
     month: 'short',
     day: 'numeric',
     hour: '2-digit',
     minute: '2-digit'
-  }).format(value.toDate());
+  }).format(date);
 }
 
 export function hashNumber(value = '', min = 0, max = 100) {

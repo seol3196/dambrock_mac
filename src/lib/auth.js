@@ -1,15 +1,8 @@
-import { deleteApp, initializeApp } from 'firebase/app';
-import {
-  connectAuthEmulator,
-  createUserWithEmailAndPassword,
-  getAuth,
-  signInWithEmailAndPassword,
-  signOut
-} from 'firebase/auth';
-import { doc, serverTimestamp, setDoc } from 'firebase/firestore';
-import { auth, db, firebaseConfig, useFirebaseEmulators } from './firebase';
+import { apiFetch, clearToken, getToken, setToken } from './api';
 
 const DOMAIN = '@damvyeorak.local';
+
+let currentUser = null;
 
 export function toEmail(id) {
   return `${String(id).trim()}${DOMAIN}`;
@@ -19,12 +12,47 @@ export function toId(email = '') {
   return email.endsWith(DOMAIN) ? email.slice(0, -DOMAIN.length) : email;
 }
 
+export function authUserFromProfile(profile) {
+  if (!profile) return null;
+  return {
+    uid: profile.uid,
+    email: toEmail(profile.id),
+    displayName: profile.displayName
+  };
+}
+
+export function notifyAuthChanged() {
+  window.dispatchEvent(new Event('auth-changed'));
+}
+
 export async function login(id, password) {
-  return signInWithEmailAndPassword(auth, toEmail(id), password);
+  const data = await apiFetch('/api/auth/login', {
+    method: 'POST',
+    body: { id: String(id).trim(), password }
+  });
+  setToken(data.token);
+  currentUser = data.user;
+  notifyAuthChanged();
+  return { user: authUserFromProfile(data.user), profile: data.user };
 }
 
 export async function logout() {
-  return signOut(auth);
+  try {
+    if (getToken()) {
+      await apiFetch('/api/auth/logout', { method: 'POST' });
+    }
+  } finally {
+    clearToken();
+    currentUser = null;
+    notifyAuthChanged();
+  }
+}
+
+export async function getCurrentProfile() {
+  if (!getToken()) return null;
+  const data = await apiFetch('/api/auth/me');
+  currentUser = data.user;
+  return currentUser;
 }
 
 export function makePassword(length = 8) {
@@ -33,28 +61,14 @@ export function makePassword(length = 8) {
 }
 
 export async function createUser(id, password, role, extraData = {}) {
-  if (String(password).length < 6) {
-    throw new Error('Password must be at least 6 characters.');
-  }
-
-  const secondaryApp = initializeApp(firebaseConfig, `secondary-${Date.now()}-${Math.random()}`);
-  const secondaryAuth = getAuth(secondaryApp);
-  if (useFirebaseEmulators) {
-    connectAuthEmulator(secondaryAuth, 'http://127.0.0.1:9099', { disableWarnings: true });
-  }
-
-  try {
-    const credential = await createUserWithEmailAndPassword(secondaryAuth, toEmail(id), password);
-    await setDoc(doc(db, 'users', credential.user.uid), {
+  const data = await apiFetch('/api/users', {
+    method: 'POST',
+    body: {
       id,
+      password,
       role,
-      displayName: extraData.displayName || id,
-      createdAt: serverTimestamp(),
       ...extraData
-    });
-    return credential.user;
-  } finally {
-    await signOut(secondaryAuth).catch(() => {});
-    await deleteApp(secondaryApp);
-  }
+    }
+  });
+  return authUserFromProfile(data.user);
 }

@@ -1,10 +1,9 @@
 import { ExternalLink, NotebookPen } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { Link } from 'react-router-dom';
 import Layout from '../components/Layout.jsx';
 import { useAuth } from '../contexts/AuthContext.jsx';
-import { db } from '../lib/firebase';
+import { subscribeWalls } from '../lib/firestore';
 import { wallTone } from '../lib/ui';
 
 export default function StudentPage() {
@@ -13,16 +12,13 @@ export default function StudentPage() {
 
   useEffect(() => {
     if (!profile?.teacherId) return undefined;
-    const q = query(collection(db, 'walls'), where('ownerId', '==', profile.teacherId));
-    return onSnapshot(q, (snapshot) =>
-      setWalls(snapshot.docs.map((item) => ({ id: item.id, ...item.data() })))
-    );
+    return subscribeWalls({ ownerId: profile.teacherId }, setWalls);
   }, [profile?.teacherId]);
 
   const sortedWalls = useMemo(
     () =>
       [...walls].sort(
-        (a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0)
+        (a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0)
       ),
     [walls]
   );
