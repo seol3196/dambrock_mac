@@ -1,12 +1,12 @@
 import {
   ArrowLeft,
   Copy,
-  Palette,
   Plus,
   QrCode,
   Send,
   Settings2,
   Share2,
+  Trash2,
   X
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
@@ -18,7 +18,7 @@ import { useAuth } from '../contexts/AuthContext.jsx';
 import {
   colorOptions,
   createPost,
-  updatePost,
+  deleteWallColumn,
   updatePostLayouts,
   updateWall,
   wallBackgroundOptions
@@ -46,6 +46,14 @@ function backgroundSwatch(value) {
 
 function postSortValue(post, fallbackOrder) {
   return Number.isFinite(post.order) ? post.order : fallbackOrder;
+}
+
+function defaultColumnName(column) {
+  return `${column}\uBC88 \uCEEC\uB7FC`;
+}
+
+function columnName(wall, column) {
+  return wall?.columnNames?.[column] || defaultColumnName(column);
 }
 
 function nextPostPlacement(postsByColumn, columnNumbers) {
@@ -82,6 +90,7 @@ export default function WallPage() {
   const [shareOpen, setShareOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [draggingPost, setDraggingPost] = useState(null);
+  const [columnNameDrafts, setColumnNameDrafts] = useState({});
   const [wallError, setWallError] = useState('');
   const [viewportWidth, setViewportWidth] = useState(
     typeof window === 'undefined' ? 1600 : window.innerWidth
@@ -134,14 +143,14 @@ export default function WallPage() {
         setWall(nextWall);
 
         if (nextWall) {
+          setColumnNameDrafts(nextWall.columnNames || {});
           setSettingsForm({
             title: nextWall.title || '',
             description: nextWall.description || '',
             accessMode: nextWall.accessMode || 'login',
             commentsEnabled: nextWall.commentsEnabled ?? true,
             likesEnabled: nextWall.likesEnabled ?? true,
-            backgroundTone: nextWall.backgroundTone || wallBackgroundOptions[0].value,
-            columnCount: clampColumnCount(nextWall.columnCount ?? 4)
+            backgroundTone: nextWall.backgroundTone || wallBackgroundOptions[0].value
           });
         }
       },
@@ -238,11 +247,54 @@ export default function WallPage() {
 
   async function saveSettings() {
     if (!settingsForm) return;
-    await updateWall(wallId, {
-      ...settingsForm,
-      columnCount: clampColumnCount(settingsForm.columnCount)
-    });
+    await updateWall(wallId, settingsForm);
     setSettingsOpen(false);
+  }
+
+  async function addColumn() {
+    if (columnCount >= 5) {
+      alert('\uCEEC\uB7FC\uC740 \uCD5C\uB300 5\uAC1C\uAE4C\uC9C0 \uAC00\uB2A5\uD569\uB2C8\uB2E4.');
+      return;
+    }
+
+    const nextColumn = columnCount + 1;
+    await updateWall(wallId, {
+      columnCount: nextColumn,
+      columnNames: {
+        ...(wall?.columnNames || {}),
+        [nextColumn]: columnNameDrafts[nextColumn] || defaultColumnName(nextColumn)
+      }
+    });
+  }
+
+  async function saveColumnName(column) {
+    const nextName = (columnNameDrafts[column] || '').trim();
+    const normalizedName = nextName || defaultColumnName(column);
+    const currentName = columnName(wall, column);
+
+    setColumnNameDrafts((drafts) => ({ ...drafts, [column]: normalizedName }));
+    if (normalizedName === currentName) return;
+
+    await updateWall(wallId, {
+      columnNames: {
+        ...(wall?.columnNames || {}),
+        [column]: normalizedName
+      }
+    });
+  }
+
+  async function removeColumn(column) {
+    if (columnCount <= 1) {
+      alert('\uCEEC\uB7FC\uC740 \uCD5C\uC18C 1\uAC1C \uC774\uC0C1 \uD544\uC694\uD569\uB2C8\uB2E4.');
+      return;
+    }
+
+    const ok = window.confirm(
+      '\uC774 \uCEEC\uB7FC\uACFC \uC548\uC758 \uBAA8\uB4E0 \uD3EC\uC2A4\uD2B8\uC787\uC774 \uC0AD\uC81C\uB429\uB2C8\uB2E4. \uACC4\uC18D\uD560\uAE4C\uC694?'
+    );
+    if (!ok) return;
+
+    await deleteWallColumn(wallId, column, columnCount, wall?.columnNames || {});
   }
 
   async function movePostToColumn(column, targetPostId = null, placement = 'after') {
@@ -350,6 +402,18 @@ export default function WallPage() {
 
       <section className="mx-auto w-full max-w-[1600px] px-5 py-6">
         <div data-testid="wall-board">
+          {canManageWall && (
+            <div className="mb-4 flex justify-end">
+              <button
+                type="button"
+                onClick={addColumn}
+                className="inline-flex items-center gap-1 rounded-full border border-stone-900/10 bg-white/55 px-3 py-1.5 text-xs font-bold text-stone-700 shadow-sm transition hover:bg-white/80"
+              >
+                <Plus size={14} />
+                {'\uCEEC\uB7FC \uCD94\uAC00'}
+              </button>
+            </div>
+          )}
           <div className="grid gap-5" style={boardGridStyle}>
             {columnNumbers.map((column) => (
               <div
@@ -368,13 +432,41 @@ export default function WallPage() {
                     : ''
                 }`}
               >
-                {draggingPost && canManageWall && (
-                  <div className="mb-3 px-1">
-                    <span className="text-xs font-bold uppercase tracking-[0.2em] text-stone-500">
-                      Column {column}
-                    </span>
-                  </div>
-                )}
+                <div className="mb-3 flex min-h-10 items-center gap-2 px-1">
+                  {canManageWall ? (
+                    <input
+                      value={columnNameDrafts[column] ?? columnName(wall, column)}
+                      onChange={(event) =>
+                        setColumnNameDrafts((drafts) => ({
+                          ...drafts,
+                          [column]: event.target.value
+                        }))
+                      }
+                      onBlur={() => saveColumnName(column)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          event.currentTarget.blur();
+                        }
+                      }}
+                      maxLength={24}
+                      className="min-w-0 flex-1 rounded-[8px] border border-transparent bg-white/45 px-3 py-2 text-sm font-bold text-stone-800 outline-none transition hover:bg-white/65 focus:border-stone-300 focus:bg-white"
+                    />
+                  ) : (
+                    <h2 className="min-w-0 flex-1 truncate px-1 text-sm font-bold text-stone-800">
+                      {columnName(wall, column)}
+                    </h2>
+                  )}
+                  {canManageWall && (
+                    <button
+                      type="button"
+                      onClick={() => removeColumn(column)}
+                      aria-label={'\uCEEC\uB7FC \uC0AD\uC81C'}
+                      className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-stone-500 transition hover:bg-white/70 hover:text-red-600"
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  )}
+                </div>
                 <div className="space-y-4">
                   {postsByColumn[column].map((post) => (
                     <PostCard
@@ -442,25 +534,6 @@ export default function WallPage() {
                   onChange={(e) => setSettingsForm({ ...settingsForm, description: e.target.value })}
                   className="min-h-24 w-full rounded-[8px] border border-stone-200 p-3"
                 />
-              </div>
-              <div>
-                <label className="mb-2 block text-sm font-bold text-stone-700">컬럼 개수</label>
-                <select
-                  value={settingsForm.columnCount}
-                  onChange={(e) =>
-                    setSettingsForm({
-                      ...settingsForm,
-                      columnCount: clampColumnCount(e.target.value)
-                    })
-                  }
-                  className="h-11 w-full rounded-[8px] border border-stone-200 bg-white px-3"
-                >
-                  {[1, 2, 3, 4, 5].map((count) => (
-                    <option key={count} value={count}>
-                      {count}개
-                    </option>
-                  ))}
-                </select>
               </div>
               <label className="flex items-center justify-between rounded-[10px] border border-stone-200 px-4 py-3">
                 <span className="text-sm font-bold text-stone-800">로그인 필요</span>

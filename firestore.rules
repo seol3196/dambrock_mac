@@ -107,7 +107,11 @@ service cloud.firestore {
       allow create: if canReadWall(postDoc(request.resource.data.postId).data.wallId)
         && wallDoc(postDoc(request.resource.data.postId).data.wallId).data.commentsEnabled == true;
       allow update: if false;
-      allow delete: if signedIn() && resource.data.authorId == request.auth.uid;
+      allow delete: if signedIn()
+        && (
+          resource.data.authorId == request.auth.uid
+          || wallDoc(postDoc(resource.data.postId).data.wallId).data.ownerId == request.auth.uid
+        );
     }
 
     match /likes/{likeId} {

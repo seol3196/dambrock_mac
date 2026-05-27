@@ -4,9 +4,12 @@ import {
   deleteDoc,
   doc,
   getDoc,
+  getDocs,
+  query,
   runTransaction,
   serverTimestamp,
   updateDoc,
+  where,
   writeBatch
 } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
@@ -78,6 +81,56 @@ export function updatePostLayouts(updates) {
     });
   }
   return batch.commit();
+}
+
+export async function deleteWallColumn(wallId, column, columnCount, columnNames = {}) {
+  const postsQuery = query(collection(db, 'posts'), where('wallId', '==', wallId));
+  const postsSnapshot = await getDocs(postsQuery);
+  const posts = postsSnapshot.docs.map((postDoc) => ({ id: postDoc.id, ...postDoc.data() }));
+  const deletedPosts = posts.filter((post) => post.column === column);
+  const shiftedPosts = posts.filter((post) => post.column > column);
+  const batches = [writeBatch(db)];
+  let batchOperationCount = 0;
+
+  function activeBatch() {
+    if (batchOperationCount >= 450) {
+      batches.push(writeBatch(db));
+      batchOperationCount = 0;
+    }
+    batchOperationCount += 1;
+    return batches[batches.length - 1];
+  }
+
+  for (const post of deletedPosts) {
+    const commentsQuery = query(collection(db, 'comments'), where('postId', '==', post.id));
+    const commentsSnapshot = await getDocs(commentsQuery);
+    commentsSnapshot.docs.forEach((commentDoc) => {
+      activeBatch().delete(doc(db, 'comments', commentDoc.id));
+    });
+    activeBatch().delete(doc(db, 'posts', post.id));
+  }
+
+  for (const post of shiftedPosts) {
+    activeBatch().update(doc(db, 'posts', post.id), {
+      column: post.column - 1,
+      updatedAt: serverTimestamp()
+    });
+  }
+
+  const nextColumnNames = {};
+  for (let nextColumn = 1; nextColumn < columnCount; nextColumn += 1) {
+    nextColumnNames[nextColumn] =
+      nextColumn < column ? columnNames[nextColumn] : columnNames[nextColumn + 1];
+  }
+
+  activeBatch().update(doc(db, 'walls', wallId), {
+    columnCount: columnCount - 1,
+    columnNames: nextColumnNames
+  });
+
+  for (const batch of batches) {
+    await batch.commit();
+  }
 }
 
 export function createComment(data) {
