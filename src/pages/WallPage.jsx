@@ -75,6 +75,19 @@ function nextPostPlacement(postsByColumn, columnNumbers) {
   };
 }
 
+function nextColumnPostPlacement(postsByColumn, column) {
+  const columnPosts = postsByColumn[column] || [];
+  const lastOrder = columnPosts.reduce(
+    (maxOrder, post, index) => Math.max(maxOrder, postSortValue(post, index)),
+    -1
+  );
+
+  return {
+    column,
+    order: lastOrder + 1
+  };
+}
+
 export default function WallPage() {
   const { wallId } = useParams();
   const location = useLocation();
@@ -100,10 +113,12 @@ export default function WallPage() {
   const shareUrl = `${origin}/wall/${wallId}`;
   const canManageWall = Boolean(user && role === 'teacher' && wall?.ownerId === user.uid);
   const columnCount = clampColumnCount(wall?.columnCount ?? 4);
+  const requestedColumn = Number(new URLSearchParams(location.search).get('column'));
   const columnNumbers = useMemo(
     () => Array.from({ length: columnCount }, (_, index) => index + 1),
     [columnCount]
   );
+  const sharedColumn = columnNumbers.includes(requestedColumn) ? requestedColumn : null;
   const visibleColumns =
     viewportWidth >= 1280 ? columnCount : viewportWidth >= 768 ? Math.min(columnCount, 2) : 1;
   const boardGridStyle = useMemo(
@@ -230,15 +245,21 @@ export default function WallPage() {
       authorName: profile?.displayName || displayId || '익명',
       content: form.content.trim(),
       color: form.color,
-      ...nextPostPlacement(postsByColumn, columnNumbers)
+      ...(sharedColumn
+        ? nextColumnPostPlacement(postsByColumn, sharedColumn)
+        : nextPostPlacement(postsByColumn, columnNumbers))
     });
 
     setForm({ content: '', color: colorOptions[0].value });
     setModalOpen(false);
   }
 
-  async function copyShareUrl() {
-    await navigator.clipboard.writeText(shareUrl);
+  function columnShareUrl(column) {
+    return `${shareUrl}?column=${column}`;
+  }
+
+  async function copyShareUrl(url = shareUrl) {
+    await navigator.clipboard.writeText(url);
   }
 
   async function saveSettings() {
@@ -445,11 +466,13 @@ export default function WallPage() {
                       }}
                       maxLength={24}
                       placeholder={'\uCEEC\uB7FC\uBA85 \uC785\uB825'}
-                      className="min-w-0 flex-1 rounded-[8px] border border-transparent bg-white/45 px-3 py-2 text-sm font-bold text-stone-800 outline-none transition hover:bg-white/65 focus:border-stone-300 focus:bg-white"
+                      className="min-w-0 flex-1 rounded-[8px] border border-transparent bg-white/60 px-3 py-2 text-sm font-bold text-stone-800 outline-none transition hover:bg-white/75 focus:border-stone-300 focus:bg-white"
                     />
                   ) : columnName(wall, column) ? (
                     <h2 className="min-w-0 flex-1 truncate px-1 text-sm font-bold text-stone-800">
-                      {columnName(wall, column)}
+                      <span className="inline-block max-w-full truncate rounded-[8px] bg-white/50 px-3 py-2">
+                        {columnName(wall, column)}
+                      </span>
                     </h2>
                   ) : (
                     <div className="min-w-0 flex-1" />
@@ -660,7 +683,7 @@ export default function WallPage() {
 
       {shareOpen && canManageWall && (
         <div className="fixed inset-0 z-20 grid place-items-center bg-stone-950/45 px-4">
-          <section className="w-full max-w-md rounded-[18px] bg-white p-5 shadow-paper">
+          <section className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-[18px] bg-white p-5 shadow-paper">
             <div className="flex items-center justify-between">
               <h2 className="text-xl font-bold">담벼락 공유</h2>
               <button
@@ -682,10 +705,39 @@ export default function WallPage() {
               <p className="mt-2 break-all">{shareUrl}</p>
             </div>
 
+            <div className="mt-4 rounded-[12px] border border-stone-200 bg-stone-50 p-3">
+              <p className="text-sm font-bold text-stone-900">
+                {'\uCEEC\uB7FC\uBCC4 \uACF5\uC720 \uB9C1\uD06C'}
+              </p>
+              <div className="mt-3 space-y-2">
+                {columnNumbers.map((column) => (
+                  <div
+                    key={column}
+                    className="flex items-center gap-2 rounded-[10px] bg-white/70 px-3 py-2"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-bold text-stone-800">
+                        {columnName(wall, column) || `${column}\uBC88 \uCEEC\uB7FC`}
+                      </p>
+                      <p className="truncate text-xs text-stone-500">{columnShareUrl(column)}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => copyShareUrl(columnShareUrl(column))}
+                      className="inline-flex shrink-0 items-center gap-1 rounded-[8px] border border-stone-200 px-2.5 py-1.5 text-xs font-bold text-stone-700 hover:bg-stone-50"
+                    >
+                      <Copy size={13} />
+                      {'\uBCF5\uC0AC'}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+
             <div className="mt-4 grid gap-2 sm:grid-cols-2">
               <button
                 type="button"
-                onClick={copyShareUrl}
+                onClick={() => copyShareUrl()}
                 className="inline-flex items-center justify-center gap-2 rounded-[10px] bg-stone-900 px-4 py-3 text-sm font-bold text-white"
               >
                 <Copy size={16} />
