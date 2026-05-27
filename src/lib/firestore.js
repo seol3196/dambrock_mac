@@ -119,8 +119,10 @@ export async function deleteWallColumn(wallId, column, columnCount, columnNames 
 
   const nextColumnNames = {};
   for (let nextColumn = 1; nextColumn < columnCount; nextColumn += 1) {
-    nextColumnNames[nextColumn] =
-      nextColumn < column ? columnNames[nextColumn] : columnNames[nextColumn + 1];
+    const name = nextColumn < column ? columnNames[nextColumn] : columnNames[nextColumn + 1];
+    if (typeof name === 'string' && name.trim()) {
+      nextColumnNames[nextColumn] = name.trim();
+    }
   }
 
   activeBatch().update(doc(db, 'walls', wallId), {

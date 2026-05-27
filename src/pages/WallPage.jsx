@@ -48,12 +48,8 @@ function postSortValue(post, fallbackOrder) {
   return Number.isFinite(post.order) ? post.order : fallbackOrder;
 }
 
-function defaultColumnName(column) {
-  return `${column}\uBC88 \uCEEC\uB7FC`;
-}
-
 function columnName(wall, column) {
-  return wall?.columnNames?.[column] || defaultColumnName(column);
+  return wall?.columnNames?.[column] || '';
 }
 
 function nextPostPlacement(postsByColumn, columnNumbers) {
@@ -259,27 +255,26 @@ export default function WallPage() {
 
     const nextColumn = columnCount + 1;
     await updateWall(wallId, {
-      columnCount: nextColumn,
-      columnNames: {
-        ...(wall?.columnNames || {}),
-        [nextColumn]: columnNameDrafts[nextColumn] || defaultColumnName(nextColumn)
-      }
+      columnCount: nextColumn
     });
   }
 
   async function saveColumnName(column) {
     const nextName = (columnNameDrafts[column] || '').trim();
-    const normalizedName = nextName || defaultColumnName(column);
     const currentName = columnName(wall, column);
+    const nextColumnNames = { ...(wall?.columnNames || {}) };
 
-    setColumnNameDrafts((drafts) => ({ ...drafts, [column]: normalizedName }));
-    if (normalizedName === currentName) return;
+    if (nextName) {
+      nextColumnNames[column] = nextName;
+    } else {
+      delete nextColumnNames[column];
+    }
+
+    setColumnNameDrafts(nextColumnNames);
+    if (nextName === currentName) return;
 
     await updateWall(wallId, {
-      columnNames: {
-        ...(wall?.columnNames || {}),
-        [column]: normalizedName
-      }
+      columnNames: nextColumnNames
     });
   }
 
@@ -449,12 +444,15 @@ export default function WallPage() {
                         }
                       }}
                       maxLength={24}
+                      placeholder={'\uCEEC\uB7FC\uBA85 \uC785\uB825'}
                       className="min-w-0 flex-1 rounded-[8px] border border-transparent bg-white/45 px-3 py-2 text-sm font-bold text-stone-800 outline-none transition hover:bg-white/65 focus:border-stone-300 focus:bg-white"
                     />
-                  ) : (
+                  ) : columnName(wall, column) ? (
                     <h2 className="min-w-0 flex-1 truncate px-1 text-sm font-bold text-stone-800">
                       {columnName(wall, column)}
                     </h2>
+                  ) : (
+                    <div className="min-w-0 flex-1" />
                   )}
                   {canManageWall && (
                     <button
