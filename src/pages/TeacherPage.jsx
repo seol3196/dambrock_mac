@@ -1,10 +1,10 @@
 import {
+  BrickWall,
   Copy,
   ExternalLink,
   KeyRound,
   Pencil,
   Printer,
-  Settings,
   Trash2,
   Users
 } from 'lucide-react';
@@ -93,8 +93,8 @@ export default function TeacherPage() {
           tab === 'walls' ? 'bg-stone-900 text-white' : 'text-stone-700'
         }`}
       >
-        <Settings size={18} />
-        담벼락 관리
+        <BrickWall size={18} />
+        내 담벼락
       </button>
     </aside>
   );
