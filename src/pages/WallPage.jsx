@@ -48,6 +48,29 @@ function postSortValue(post, fallbackOrder) {
   return Number.isFinite(post.order) ? post.order : fallbackOrder;
 }
 
+function nextPostPlacement(postsByColumn, columnNumbers) {
+  const placement = columnNumbers
+    .map((column) => {
+      const columnPosts = postsByColumn[column] || [];
+      const lastOrder = columnPosts.reduce(
+        (maxOrder, post, index) => Math.max(maxOrder, postSortValue(post, index)),
+        -1
+      );
+
+      return {
+        column,
+        count: columnPosts.length,
+        order: lastOrder + 1
+      };
+    })
+    .sort((a, b) => a.count - b.count || a.column - b.column)[0];
+
+  return {
+    column: placement.column,
+    order: placement.order
+  };
+}
+
 export default function WallPage() {
   const { wallId } = useParams();
   const location = useLocation();
@@ -201,7 +224,8 @@ export default function WallPage() {
       authorId: user?.uid || 'anonymous',
       authorName: profile?.displayName || displayId || '익명',
       content: form.content.trim(),
-      color: form.color
+      color: form.color,
+      ...nextPostPlacement(postsByColumn, columnNumbers)
     });
 
     setForm({ content: '', color: colorOptions[0].value });
@@ -338,9 +362,9 @@ export default function WallPage() {
                   event.preventDefault();
                   if (canManageWall) movePostToColumn(column);
                 }}
-                className={`min-h-[220px] rounded-[12px] ${
+                className={`min-h-[300px] rounded-[16px] p-3 transition ${
                   draggingPost && canManageWall
-                    ? 'bg-white/18 outline outline-2 outline-dashed outline-stone-400'
+                    ? 'bg-white/22 outline outline-2 outline-offset-2 outline-dashed outline-stone-400'
                     : ''
                 }`}
               >
