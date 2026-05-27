@@ -49,13 +49,19 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/posts/$(postId));
     }
 
+    function onlyPostContentChanged() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['content', 'updatedAt']);
+    }
+
     match /users/{uid} {
       allow read: if signedIn() && (request.auth.uid == uid || isAdmin() || (isTeacher() && resource.data.teacherId == request.auth.uid));
       allow create: if isAdmin()
         || isBootstrapAdmin(uid)
         || (isTeacher() && request.resource.data.role == 'student' && request.resource.data.teacherId == request.auth.uid);
-      allow update, delete: if isAdmin()
+      allow update: if isAdmin()
         || (isTeacher() && request.resource.data.role == 'student' && request.resource.data.teacherId == request.auth.uid);
+      allow delete: if isAdmin()
+        || (isTeacher() && resource.data.role == 'student' && resource.data.teacherId == request.auth.uid);
     }
 
     match /walls/{wallId} {
@@ -68,8 +74,10 @@ service cloud.firestore {
       allow read: if canReadWall(resource.data.wallId);
       allow create: if canReadWall(request.resource.data.wallId);
       allow update: if signedIn()
-        && (resource.data.authorId == request.auth.uid
-          || wallDoc(resource.data.wallId).data.ownerId == request.auth.uid);
+        && (
+          wallDoc(resource.data.wallId).data.ownerId == request.auth.uid
+          || (resource.data.authorId == request.auth.uid && onlyPostContentChanged())
+        );
       allow delete: if signedIn() && (resource.data.authorId == request.auth.uid || wallDoc(resource.data.wallId).data.ownerId == request.auth.uid);
     }
 

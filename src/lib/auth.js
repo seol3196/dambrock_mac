@@ -1,12 +1,13 @@
 import { deleteApp, initializeApp } from 'firebase/app';
 import {
+  connectAuthEmulator,
   createUserWithEmailAndPassword,
   getAuth,
   signInWithEmailAndPassword,
   signOut
 } from 'firebase/auth';
 import { doc, serverTimestamp, setDoc } from 'firebase/firestore';
-import { auth, db, firebaseConfig } from './firebase';
+import { auth, db, firebaseConfig, useFirebaseEmulators } from './firebase';
 
 const DOMAIN = '@damvyeorak.local';
 
@@ -38,6 +39,9 @@ export async function createUser(id, password, role, extraData = {}) {
 
   const secondaryApp = initializeApp(firebaseConfig, `secondary-${Date.now()}-${Math.random()}`);
   const secondaryAuth = getAuth(secondaryApp);
+  if (useFirebaseEmulators) {
+    connectAuthEmulator(secondaryAuth, 'http://127.0.0.1:9099', { disableWarnings: true });
+  }
 
   try {
     const credential = await createUserWithEmailAndPassword(secondaryAuth, toEmail(id), password);

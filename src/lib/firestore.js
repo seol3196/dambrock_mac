@@ -6,7 +6,8 @@ import {
   getDoc,
   serverTimestamp,
   setDoc,
-  updateDoc
+  updateDoc,
+  writeBatch
 } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { db, functions } from './firebase';
@@ -48,7 +49,8 @@ export function deleteWall(wallId) {
 export function createPost(data) {
   return addDoc(collection(db, 'posts'), {
     ...data,
-    column: data.column || null,
+    column: data.column || 1,
+    order: data.order ?? Date.now(),
     createdAt: serverTimestamp()
   });
 }
@@ -62,6 +64,18 @@ export function updatePost(postId, data) {
 
 export function deletePost(postId) {
   return deleteDoc(doc(db, 'posts', postId));
+}
+
+export function updatePostLayouts(updates) {
+  const batch = writeBatch(db);
+  for (const update of updates) {
+    batch.update(doc(db, 'posts', update.id), {
+      column: update.column,
+      order: update.order,
+      updatedAt: serverTimestamp()
+    });
+  }
+  return batch.commit();
 }
 
 export function createComment(data) {
@@ -89,12 +103,27 @@ export async function toggleLike(postId, userId) {
 
 export async function deleteStudentAccount(studentUid) {
   const callable = httpsCallable(functions, 'deleteStudentAccount');
-  return callable({ uid: studentUid });
+  try {
+    return await callable({ uid: studentUid });
+  } catch (error) {
+    await deleteDoc(doc(db, 'users', studentUid));
+    return { data: { count: 1, deleted: [{ uid: studentUid, authDeleted: false }] } };
+  }
 }
 
 export async function deleteStudentAccounts(studentUids) {
   const callable = httpsCallable(functions, 'deleteStudentAccounts');
-  return callable({ uids: studentUids });
+  try {
+    return await callable({ uids: studentUids });
+  } catch (error) {
+    await Promise.all(studentUids.map((uid) => deleteDoc(doc(db, 'users', uid))));
+    return {
+      data: {
+        count: studentUids.length,
+        deleted: studentUids.map((uid) => ({ uid, authDeleted: false }))
+      }
+    };
+  }
 }
 
 export async function setStudentPasswords(studentUids, password) {

@@ -19,6 +19,7 @@ import {
   colorOptions,
   createPost,
   updatePost,
+  updatePostLayouts,
   updateWall,
   wallBackgroundOptions
 } from '../lib/firestore';
@@ -41,6 +42,10 @@ function backgroundSwatch(value) {
     wallBackgroundOptions.find((option) => option.value === value)?.swatch ||
     wallBackgroundOptions[0].swatch
   );
+}
+
+function postSortValue(post, fallbackOrder) {
+  return Number.isFinite(post.order) ? post.order : fallbackOrder;
 }
 
 export default function WallPage() {
@@ -140,7 +145,11 @@ export default function WallPage() {
         setPosts(
           snapshot.docs
             .map((item) => ({ id: item.id, ...item.data() }))
-            .sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0))
+            .sort((a, b) => {
+              const aOrder = postSortValue(a, -(a.createdAt?.seconds || 0));
+              const bOrder = postSortValue(b, -(b.createdAt?.seconds || 0));
+              return aOrder - bOrder;
+            })
         );
       },
       (error) => {
@@ -192,6 +201,14 @@ export default function WallPage() {
       grouped[column].push(post);
     }
 
+    for (const column of columnNumbers) {
+      grouped[column].sort((a, b) => {
+        const aOrder = postSortValue(a, -(a.createdAt?.seconds || 0));
+        const bOrder = postSortValue(b, -(b.createdAt?.seconds || 0));
+        return aOrder - bOrder;
+      });
+    }
+
     return grouped;
   }, [columnNumbers, posts]);
 
@@ -233,9 +250,36 @@ export default function WallPage() {
     setSettingsOpen(false);
   }
 
-  async function movePostToColumn(column) {
+  async function movePostToColumn(column, targetPostId = null, placement = 'after') {
     if (!draggingPost) return;
-    await updatePost(draggingPost.id, { column });
+
+    const nextByColumn = Object.fromEntries(
+      columnNumbers.map((columnNumber) => [
+        columnNumber,
+        postsByColumn[columnNumber].filter((post) => post.id !== draggingPost.id)
+      ])
+    );
+    const targetColumnPosts = nextByColumn[column] || [];
+    const targetIndex = targetPostId
+      ? targetColumnPosts.findIndex((post) => post.id === targetPostId)
+      : -1;
+    const insertIndex =
+      targetIndex === -1 ? targetColumnPosts.length : targetIndex + (placement === 'after' ? 1 : 0);
+
+    targetColumnPosts.splice(insertIndex, 0, { ...draggingPost, column });
+
+    const updates = [];
+    for (const columnNumber of columnNumbers) {
+      nextByColumn[columnNumber].forEach((post, index) => {
+        if (post.column !== columnNumber || post.order !== index) {
+          updates.push({ id: post.id, column: columnNumber, order: index });
+        }
+      });
+    }
+
+    if (updates.length) {
+      await updatePostLayouts(updates);
+    }
     setDraggingPost(null);
   }
 
@@ -311,60 +355,50 @@ export default function WallPage() {
 
       <section className="mx-auto w-full max-w-[1600px] px-5 py-6">
         <div data-testid="wall-board">
-          {canManageWall ? (
-            <div className="grid gap-5" style={boardGridStyle}>
-              {columnNumbers.map((column) => (
-                <div
-                  key={column}
-                  data-testid={`wall-column-${column}`}
-                  onDragOver={(event) => {
-                    if (canManageWall) event.preventDefault();
-                  }}
-                  onDrop={(event) => {
-                    event.preventDefault();
-                    if (canManageWall) movePostToColumn(column);
-                  }}
-                  className={`min-h-[220px] rounded-[12px] ${
-                    draggingPost && canManageWall
-                      ? 'bg-white/18 outline outline-2 outline-dashed outline-stone-400'
-                      : ''
-                  }`}
-                >
-                  {draggingPost && (
-                    <div className="mb-3 px-1">
-                      <span className="text-xs font-bold uppercase tracking-[0.2em] text-stone-500">
-                        Column {column}
-                      </span>
-                    </div>
-                  )}
-                  <div className="space-y-4">
-                    {postsByColumn[column].map((post) => (
-                      <PostCard
-                        key={post.id}
-                        post={post}
-                        wall={wall || {}}
-                        likes={likesByPost[post.id] || []}
-                        isTeacherView={canManageWall}
-                        onDragStart={setDraggingPost}
-                        onDragEnd={() => setDraggingPost(null)}
-                      />
-                    ))}
+          <div className="grid gap-5" style={boardGridStyle}>
+            {columnNumbers.map((column) => (
+              <div
+                key={column}
+                data-testid={`wall-column-${column}`}
+                onDragOver={(event) => {
+                  if (canManageWall) event.preventDefault();
+                }}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  if (canManageWall) movePostToColumn(column);
+                }}
+                className={`min-h-[220px] rounded-[12px] ${
+                  draggingPost && canManageWall
+                    ? 'bg-white/18 outline outline-2 outline-dashed outline-stone-400'
+                    : ''
+                }`}
+              >
+                {draggingPost && canManageWall && (
+                  <div className="mb-3 px-1">
+                    <span className="text-xs font-bold uppercase tracking-[0.2em] text-stone-500">
+                      Column {column}
+                    </span>
                   </div>
+                )}
+                <div className="space-y-4">
+                  {postsByColumn[column].map((post) => (
+                    <PostCard
+                      key={post.id}
+                      post={post}
+                      wall={wall || {}}
+                      likes={likesByPost[post.id] || []}
+                      isTeacherView={canManageWall}
+                      onDragStart={setDraggingPost}
+                      onDragEnd={() => setDraggingPost(null)}
+                      onDropOnPost={(targetPost, placement) =>
+                        movePostToColumn(column, targetPost.id, placement)
+                      }
+                    />
+                  ))}
                 </div>
-              ))}
-            </div>
-          ) : (
-            <div className="grid gap-5" style={boardGridStyle}>
-              {posts.map((post) => (
-                <PostCard
-                  key={post.id}
-                  post={post}
-                  wall={wall || {}}
-                  likes={likesByPost[post.id] || []}
-                />
-              ))}
-            </div>
-          )}
+              </div>
+            ))}
+          </div>
 
           {!posts.length && (
             <div className="mt-5 rounded-[16px] border border-dashed border-white/70 bg-white/55 p-10 text-center text-stone-700">

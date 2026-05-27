@@ -20,7 +20,8 @@ export default function PostCard({
   likes,
   isTeacherView = false,
   onDragStart,
-  onDragEnd
+  onDragEnd,
+  onDropOnPost
 }) {
   const { user, role } = useAuth();
   const [commentsOpen, setCommentsOpen] = useState(false);
@@ -29,7 +30,9 @@ export default function PostCard({
   const liked = Boolean(user && likes.some((like) => like.userId === user.uid));
   const canDelete =
     user && (post.authorId === user.uid || (role === 'teacher' && wall.ownerId === user.uid));
-  const canEdit = Boolean(user && post.authorId === user.uid);
+  const canEdit = Boolean(
+    user && (post.authorId === user.uid || (role === 'teacher' && wall.ownerId === user.uid))
+  );
   const canDrag = Boolean(isTeacherView && role === 'teacher' && wall.ownerId === user.uid);
 
   useEffect(() => {
@@ -56,6 +59,19 @@ export default function PostCard({
       draggable={canDrag}
       onDragStart={() => onDragStart?.(post)}
       onDragEnd={() => onDragEnd?.()}
+      onDragOver={(event) => {
+        if (!canDrag) return;
+        event.preventDefault();
+        event.stopPropagation();
+      }}
+      onDrop={(event) => {
+        if (!canDrag) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const { top, height } = event.currentTarget.getBoundingClientRect();
+        const placement = event.clientY < top + height / 2 ? 'before' : 'after';
+        onDropOnPost?.(post, placement);
+      }}
       className={`paper-edge fade-pop relative w-full rounded-[10px] border border-stone-900/5 ${
         post.color || 'bg-yellow-100'
       } p-4 shadow-paper ${canDrag ? 'cursor-grab active:cursor-grabbing' : ''}`}

@@ -7,7 +7,8 @@ initializeApp();
 
 const callableOptions = {
   region: 'us-central1',
-  cors: true
+  cors: ['https://dambrock.netlify.app', 'http://localhost:5173'],
+  invoker: 'public'
 };
 
 function getTeacherUid(request) {
