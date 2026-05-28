@@ -4,9 +4,11 @@ import {
   ExternalLink,
   KeyRound,
   Pencil,
+  Plus,
   Printer,
   Trash2,
-  Users
+  Users,
+  X
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -30,7 +32,7 @@ const RESET_PASSWORD = '123456';
 
 export default function TeacherPage() {
   const { user, displayId, profile } = useAuth();
-  const [tab, setTab] = useState('students');
+  const [tab, setTab] = useState('walls');
   const [students, setStudents] = useState([]);
   const [walls, setWalls] = useState([]);
   const [studentForm, setStudentForm] = useState({
@@ -50,7 +52,15 @@ export default function TeacherPage() {
     description: '',
     accessMode: 'login',
     commentsEnabled: true,
-    likesEnabled: true
+    likesEnabled: true,
+    showAuthorNames: true,
+    postMode: 'free',
+    postTemplate: {
+      fields: [
+        { id: 'field_1', label: '질문 1', type: 'shortText', required: true },
+        { id: 'field_2', label: '질문 2', type: 'longText', required: true }
+      ]
+    }
   });
   const origin = typeof window === 'undefined' ? '' : window.location.origin;
 
@@ -71,23 +81,23 @@ export default function TeacherPage() {
     <aside className="rounded-[8px] bg-white/85 p-3 shadow-soft">
       <button
         type="button"
-        onClick={() => setTab('students')}
-        className={`flex h-11 w-full items-center gap-2 rounded-[8px] px-3 font-bold ${
-          tab === 'students' ? 'bg-stone-900 text-white' : 'text-stone-700'
-        }`}
-      >
-        <Users size={18} />
-        학생 관리
-      </button>
-      <button
-        type="button"
         onClick={() => setTab('walls')}
-        className={`mt-2 flex h-11 w-full items-center gap-2 rounded-[8px] px-3 font-bold ${
+        className={`flex h-11 w-full items-center gap-2 rounded-[8px] px-3 font-bold ${
           tab === 'walls' ? 'bg-stone-900 text-white' : 'text-stone-700'
         }`}
       >
         <BrickWall size={18} />
         내 담벼락
+      </button>
+      <button
+        type="button"
+        onClick={() => setTab('students')}
+        className={`mt-2 flex h-11 w-full items-center gap-2 rounded-[8px] px-3 font-bold ${
+          tab === 'students' ? 'bg-stone-900 text-white' : 'text-stone-700'
+        }`}
+      >
+        <Users size={18} />
+        학생 관리
       </button>
     </aside>
   );
@@ -223,7 +233,15 @@ export default function TeacherPage() {
       description: '',
       accessMode: 'login',
       commentsEnabled: true,
-      likesEnabled: true
+      likesEnabled: true,
+      showAuthorNames: true,
+      postMode: 'free',
+      postTemplate: {
+        fields: [
+          { id: 'field_1', label: '질문 1', type: 'shortText', required: true },
+          { id: 'field_2', label: '질문 2', type: 'longText', required: true }
+        ]
+      }
     });
   }
 
@@ -699,13 +717,57 @@ function StudentManager({
 }
 
 function WallManager({ form, setForm, submit, walls, origin }) {
+  const [questionEditorOpen, setQuestionEditorOpen] = useState(false);
   const sortedWalls = useMemo(
     () => [...walls].sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0)),
     [walls]
   );
+  const templateFields = form.postTemplate?.fields || [];
+  const previewFields = templateFields.slice(0, 3);
 
   async function copyWallLink(wallId) {
     await navigator.clipboard.writeText(`${origin}/wall/${wallId}`);
+  }
+
+  function setTemplateField(fieldId, patch) {
+    setForm({
+      ...form,
+      postTemplate: {
+        fields: (form.postTemplate?.fields || []).map((field) =>
+          field.id === fieldId ? { ...field, ...patch } : field
+        )
+      }
+    });
+  }
+
+  function addTemplateField() {
+    const fields = form.postTemplate?.fields || [];
+    if (fields.length >= 10) return;
+    setForm({
+      ...form,
+      postTemplate: {
+        fields: [
+          ...fields,
+          {
+            id: `field_${Date.now()}`,
+            label: `질문 ${fields.length + 1}`,
+            type: 'shortText',
+            required: true
+          }
+        ]
+      }
+    });
+  }
+
+  function removeTemplateField(fieldId) {
+    const fields = form.postTemplate?.fields || [];
+    if (fields.length <= 1) return;
+    setForm({
+      ...form,
+      postTemplate: {
+        fields: fields.filter((field) => field.id !== fieldId)
+      }
+    });
   }
 
   return (
@@ -713,6 +775,31 @@ function WallManager({ form, setForm, submit, walls, origin }) {
       <form onSubmit={submit} className="rounded-[8px] bg-white/90 p-5 shadow-soft">
         <h2 className="text-xl font-bold">담벼락 만들기</h2>
         <div className="mt-5 space-y-4">
+          <div>
+            <p className="mb-2 text-sm font-bold text-stone-700">담벼락 형식</p>
+            <div className="grid gap-2">
+              {[
+                ['free', '자유 포스트잇', '학생들이 자유롭게 글을 써서 붙입니다.'],
+                ['worksheet', '학습지 포스트잇', '교사가 만든 질문에 답해서 붙입니다.']
+              ].map(([value, title, description]) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setForm({ ...form, postMode: value })}
+                  className={`rounded-[10px] border px-4 py-3 text-left ${
+                    form.postMode === value
+                      ? 'border-stone-900 bg-stone-900 text-white'
+                      : 'border-stone-200 bg-white text-stone-800'
+                  }`}
+                >
+                  <b className="block text-sm">{title}</b>
+                  <span className={`text-xs ${form.postMode === value ? 'text-stone-200' : 'text-stone-500'}`}>
+                    {description}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
           <Field label="제목">
             <input
               required
@@ -728,6 +815,35 @@ function WallManager({ form, setForm, submit, walls, origin }) {
               className="min-h-24 w-full rounded-[8px] border border-stone-200 p-3"
             />
           </Field>
+          {form.postMode === 'worksheet' && (
+            <div className="rounded-[10px] border border-stone-200 bg-stone-50 p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-bold text-stone-900">학습지 질문</p>
+                  <p className="mt-1 text-xs text-stone-500">
+                    {templateFields.length}개 질문 설정됨
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setQuestionEditorOpen(true)}
+                  className="shrink-0 rounded-[8px] bg-stone-900 px-3 py-2 text-xs font-bold text-white"
+                >
+                  질문 편집
+                </button>
+              </div>
+              <ul className="mt-3 space-y-1 text-sm text-stone-700">
+                {previewFields.map((field) => (
+                  <li key={field.id} className="truncate">
+                    - {field.label}
+                  </li>
+                ))}
+                {templateFields.length > previewFields.length && (
+                  <li className="text-stone-500">외 {templateFields.length - previewFields.length}개</li>
+                )}
+              </ul>
+            </div>
+          )}
           <label className="flex items-center justify-between rounded-[8px] border border-stone-200 px-4 py-3">
             <span>
               <b className="block text-sm text-stone-900">로그인 필요</b>
@@ -762,6 +878,14 @@ function WallManager({ form, setForm, submit, walls, origin }) {
             />
             좋아요 사용
           </label>
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={form.showAuthorNames}
+              onChange={(e) => setForm({ ...form, showAuthorNames: e.target.checked })}
+            />
+            작성자 이름 표시
+          </label>
         </div>
         <button
           type="submit"
@@ -770,6 +894,99 @@ function WallManager({ form, setForm, submit, walls, origin }) {
           생성
         </button>
       </form>
+
+      {questionEditorOpen && (
+        <div className="fixed inset-0 z-30 grid place-items-center bg-stone-950/45 px-4">
+          <section className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-[18px] bg-white p-5 shadow-soft">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-bold text-stone-950">학습지 질문 편집</h2>
+                <p className="mt-1 text-sm text-stone-500">질문 {templateFields.length} / 10</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setQuestionEditorOpen(false)}
+                className="rounded-full p-2 hover:bg-stone-100"
+                aria-label="질문 편집 닫기"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="mt-5 space-y-3">
+              {templateFields.map((field, index) => (
+                <div key={field.id} className="rounded-[10px] border border-stone-200 bg-stone-50 p-3">
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <span className="text-xs font-bold text-stone-500">질문 {index + 1}</span>
+                    <button
+                      type="button"
+                      onClick={() => removeTemplateField(field.id)}
+                      disabled={templateFields.length <= 1}
+                      className="text-stone-400 hover:text-red-600 disabled:opacity-30"
+                      aria-label="질문 삭제"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                  <input
+                    value={field.label}
+                    maxLength={80}
+                    onChange={(event) => setTemplateField(field.id, { label: event.target.value })}
+                    className="h-10 w-full rounded-[8px] border border-stone-200 bg-white px-3 text-sm"
+                  />
+                  <div className="mt-2 flex flex-wrap gap-3 text-sm text-stone-700">
+                    <label className="flex items-center gap-1">
+                      <input
+                        type="radio"
+                        checked={field.type !== 'longText'}
+                        onChange={() => setTemplateField(field.id, { type: 'shortText' })}
+                      />
+                      짧은 답변
+                    </label>
+                    <label className="flex items-center gap-1">
+                      <input
+                        type="radio"
+                        checked={field.type === 'longText'}
+                        onChange={() => setTemplateField(field.id, { type: 'longText' })}
+                      />
+                      긴 답변
+                    </label>
+                    <label className="flex items-center gap-1">
+                      <input
+                        type="checkbox"
+                        checked={field.required !== false}
+                        onChange={(event) =>
+                          setTemplateField(field.id, { required: event.target.checked })
+                        }
+                      />
+                      필수
+                    </label>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-5 flex flex-wrap justify-between gap-2">
+              <button
+                type="button"
+                onClick={addTemplateField}
+                disabled={templateFields.length >= 10}
+                className="inline-flex items-center gap-1 rounded-[8px] border border-stone-300 px-3 py-2 text-sm font-bold text-stone-700 disabled:opacity-40"
+              >
+                <Plus size={15} />
+                질문 추가
+              </button>
+              <button
+                type="button"
+                onClick={() => setQuestionEditorOpen(false)}
+                className="rounded-[8px] bg-stone-900 px-4 py-2 text-sm font-bold text-white"
+              >
+                완료
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
 
       <section className="rounded-[8px] bg-white/90 p-5 shadow-soft">
         <h2 className="text-xl font-bold">담벼락 목록</h2>

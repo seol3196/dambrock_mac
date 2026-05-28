@@ -4,7 +4,7 @@ import { useAuth } from '../contexts/AuthContext.jsx';
 import { createComment, deleteComment, subscribeComments } from '../lib/firestore';
 import { dateText } from '../lib/ui';
 
-export default function CommentBox({ postId }) {
+export default function CommentBox({ postId, showAuthorNames = true }) {
   const { user, profile } = useAuth();
   const [comments, setComments] = useState([]);
   const [text, setText] = useState('');
@@ -35,7 +35,8 @@ export default function CommentBox({ postId }) {
         {comments.map((comment) => (
           <div key={comment.id} className="flex items-start justify-between gap-2 text-sm">
             <p className="break-words">
-              <b>{comment.authorName}</b> {comment.text}
+              {showAuthorNames && <b>{comment.authorName} </b>}
+              {comment.text}
               <span className="ml-2 text-xs text-stone-500">{dateText(comment.createdAt)}</span>
             </p>
             {user?.uid === comment.authorId && (

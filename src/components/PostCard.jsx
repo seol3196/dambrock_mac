@@ -18,8 +18,11 @@ export default function PostCard({
   post,
   wall,
   isTeacherView = false,
+  dropPreview,
   onDragStart,
   onDragEnd,
+  onDragPreview,
+  onEditWorksheet,
   onDropOnPost
 }) {
   const { user, role } = useAuth();
@@ -34,6 +37,8 @@ export default function PostCard({
     user && (post.authorId === user.uid || (role === 'teacher' && wall.ownerId === user.uid))
   );
   const canDrag = Boolean(isTeacherView && role === 'teacher' && wall.ownerId === user.uid);
+  const isWorksheetPost = wall.postMode === 'worksheet';
+  const worksheetFields = Array.isArray(wall.postTemplate?.fields) ? wall.postTemplate.fields : [];
 
   useEffect(() => {
     setDraft(post.content);
@@ -57,12 +62,19 @@ export default function PostCard({
   return (
     <article
       draggable={canDrag}
-      onDragStart={() => onDragStart?.(post)}
+      onDragStart={(event) => {
+        event.dataTransfer.effectAllowed = 'move';
+        event.dataTransfer.setData('text/plain', post.id);
+        onDragStart?.(post);
+      }}
       onDragEnd={() => onDragEnd?.()}
       onDragOver={(event) => {
         if (!canDrag) return;
         event.preventDefault();
         event.stopPropagation();
+        const { top, height } = event.currentTarget.getBoundingClientRect();
+        const placement = event.clientY < top + height / 2 ? 'before' : 'after';
+        onDragPreview?.(post, placement);
       }}
       onDrop={(event) => {
         if (!canDrag) return;
@@ -76,6 +88,12 @@ export default function PostCard({
         post.color || 'bg-yellow-100'
       } p-4 shadow-paper ${canDrag ? 'cursor-grab active:cursor-grabbing' : ''}`}
     >
+      {dropPreview === 'before' && (
+        <div className="pointer-events-none absolute -top-2 left-2 right-2 h-1 rounded-full bg-stone-500/45 shadow-sm" />
+      )}
+      {dropPreview === 'after' && (
+        <div className="pointer-events-none absolute -bottom-2 left-2 right-2 h-1 rounded-full bg-stone-500/45 shadow-sm" />
+      )}
       <div className="mb-3 flex items-start justify-between gap-3">
         <div className="flex items-center gap-1 text-stone-500">
           {canDrag && (
@@ -90,7 +108,10 @@ export default function PostCard({
             <button
               type="button"
               aria-label="게시글 수정"
-              onClick={() => setEditing(true)}
+              onClick={() => {
+                if (isWorksheetPost) onEditWorksheet?.(post);
+                else setEditing(true);
+              }}
               className="rounded-full bg-white/75 p-1.5 text-stone-600 hover:text-stone-950"
             >
               <Pencil size={15} />
@@ -109,7 +130,7 @@ export default function PostCard({
         </div>
       </div>
 
-      {editing ? (
+      {editing && !isWorksheetPost ? (
         <div>
           <textarea
             value={draft}
@@ -138,6 +159,19 @@ export default function PostCard({
             </button>
           </div>
         </div>
+      ) : isWorksheetPost ? (
+        <div className="space-y-3">
+          {worksheetFields.map((field) => (
+            <section key={field.id} className="rounded-[8px] bg-white/45 px-3 py-2">
+              <h3 className="text-xs font-black text-stone-500">
+                {field.label}
+              </h3>
+              <p className="mt-1 whitespace-pre-wrap break-words text-[1.02rem] font-semibold leading-7 text-stone-900">
+                {post.templateAnswers?.[field.id] || '-'}
+              </p>
+            </section>
+          ))}
+        </div>
       ) : (
         <div>
           <p className="whitespace-pre-wrap break-words text-[1.03rem] font-medium leading-7 text-stone-900">
@@ -162,7 +196,11 @@ export default function PostCard({
       )}
 
       <footer className="mt-5 flex items-center justify-between gap-3 text-sm text-stone-700">
-        <span className="font-semibold">{post.authorName || '익명'}</span>
+        {wall.showAuthorNames !== false ? (
+          <span className="font-semibold">{post.authorName || '익명'}</span>
+        ) : (
+          <span className="font-semibold text-stone-500">작성자 비공개</span>
+        )}
         <span>{dateText(post.createdAt)}</span>
       </footer>
 
@@ -190,7 +228,9 @@ export default function PostCard({
           </button>
         )}
       </div>
-      {commentsOpen && <CommentBox postId={post.id} />}
+      {commentsOpen && (
+        <CommentBox postId={post.id} showAuthorNames={wall.showAuthorNames !== false} />
+      )}
     </article>
   );
 }

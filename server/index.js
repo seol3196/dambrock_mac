@@ -81,6 +81,52 @@ function asyncRoute(handler) {
   return (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
 }
 
+function csvCell(value) {
+  const text = value == null ? '' : String(value);
+  const safeText = /^[=+\-@]/.test(text) ? `'${text}` : text;
+  return `"${safeText.replace(/"/g, '""')}"`;
+}
+
+function csvRow(values) {
+  return values.map(csvCell).join(',');
+}
+
+function normalizePostTemplate(value) {
+  const fields = Array.isArray(value?.fields) ? value.fields : [];
+  return {
+    fields: fields.slice(0, 10).map((field, index) => {
+      const label = String(field?.label || '').trim().slice(0, 80);
+      return {
+        id: String(field?.id || `field_${index + 1}`).replace(/[^\w-]/g, '').slice(0, 40) || `field_${index + 1}`,
+        label: label || `질문 ${index + 1}`,
+        type: field?.type === 'longText' ? 'longText' : 'shortText',
+        required: field?.required !== false
+      };
+    })
+  };
+}
+
+function worksheetContent(template, answers) {
+  const fields = Array.isArray(template?.fields) ? template.fields : [];
+  return fields
+    .map((field) => {
+      const answer = String(answers?.[field.id] || '').trim();
+      return `${field.label}\n${answer}`;
+    })
+    .join('\n\n')
+    .trim();
+}
+
+function normalizeTemplateAnswers(template, value) {
+  const answers = value && typeof value === 'object' ? value : {};
+  const nextAnswers = {};
+  for (const field of template.fields || []) {
+    const limit = field.type === 'longText' ? 1000 : 100;
+    nextAnswers[field.id] = String(answers[field.id] || '').trim().slice(0, limit);
+  }
+  return nextAnswers;
+}
+
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true, dbPath: DB_PATH });
 });
@@ -217,11 +263,13 @@ app.get('/api/walls', requireUser, (req, res) => {
 
 app.post('/api/walls', requireUser, requireRole('teacher'), (req, res) => {
   const wallId = id('wall_');
+  const postMode = req.body.postMode === 'worksheet' ? 'worksheet' : 'free';
+  const postTemplate = postMode === 'worksheet' ? normalizePostTemplate(req.body.postTemplate) : { fields: [] };
   db.prepare(
     `INSERT INTO walls
      (id, title, description, access_mode, comments_enabled, likes_enabled, owner_id, owner_name,
-      background_tone, column_count, column_names, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      show_author_names, post_mode, post_template, background_tone, column_count, column_names, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     wallId,
     String(req.body.title || '').trim(),
@@ -231,6 +279,9 @@ app.post('/api/walls', requireUser, requireRole('teacher'), (req, res) => {
     req.body.likesEnabled === false ? 0 : 1,
     req.user.uid,
     String(req.body.ownerName || req.user.display_name || req.user.login_id),
+    req.body.showAuthorNames === false ? 0 : 1,
+    postMode,
+    JSON.stringify(postTemplate),
     req.body.backgroundTone || 'bg-[#fff8e8]',
     Number(req.body.columnCount || 4),
     JSON.stringify(req.body.columnNames || {}),
@@ -252,6 +303,11 @@ app.patch('/api/walls/:id', requireUser, requireRole('teacher'), (req, res) => {
   const wall = db.prepare('SELECT * FROM walls WHERE id = ?').get(req.params.id);
   if (!wall) return res.status(404).json({ error: 'not-found' });
   if (wall.owner_id !== req.user.uid) return res.status(403).json({ error: 'forbidden' });
+  const nextPostMode = req.body.postMode == null ? null : req.body.postMode === 'worksheet' ? 'worksheet' : 'free';
+  const nextPostTemplate =
+    req.body.postTemplate == null
+      ? null
+      : JSON.stringify(nextPostMode === 'free' ? { fields: [] } : normalizePostTemplate(req.body.postTemplate));
   db.prepare(
     `UPDATE walls SET
       title = COALESCE(?, title),
@@ -259,6 +315,9 @@ app.patch('/api/walls/:id', requireUser, requireRole('teacher'), (req, res) => {
       access_mode = COALESCE(?, access_mode),
       comments_enabled = COALESCE(?, comments_enabled),
       likes_enabled = COALESCE(?, likes_enabled),
+      show_author_names = COALESCE(?, show_author_names),
+      post_mode = COALESCE(?, post_mode),
+      post_template = COALESCE(?, post_template),
       background_tone = COALESCE(?, background_tone),
       column_count = COALESCE(?, column_count),
       column_names = COALESCE(?, column_names),
@@ -270,6 +329,9 @@ app.patch('/api/walls/:id', requireUser, requireRole('teacher'), (req, res) => {
     req.body.accessMode == null ? null : req.body.accessMode === 'public' ? 'public' : 'login',
     req.body.commentsEnabled == null ? null : req.body.commentsEnabled ? 1 : 0,
     req.body.likesEnabled == null ? null : req.body.likesEnabled ? 1 : 0,
+    req.body.showAuthorNames == null ? null : req.body.showAuthorNames ? 1 : 0,
+    nextPostMode,
+    nextPostTemplate,
     req.body.backgroundTone == null ? null : req.body.backgroundTone,
     req.body.columnCount == null ? null : Number(req.body.columnCount),
     req.body.columnNames == null ? null : JSON.stringify(req.body.columnNames),
@@ -277,6 +339,76 @@ app.patch('/api/walls/:id', requireUser, requireRole('teacher'), (req, res) => {
     wall.id
   );
   res.json({ wall: toWall(db.prepare('SELECT * FROM walls WHERE id = ?').get(wall.id)) });
+});
+
+app.get('/api/walls/:id/export.csv', requireUser, requireRole('teacher'), (req, res) => {
+  const wall = db.prepare('SELECT * FROM walls WHERE id = ?').get(req.params.id);
+  if (!wall) return res.status(404).json({ error: 'not-found' });
+  if (wall.owner_id !== req.user.uid) return res.status(403).json({ error: 'forbidden' });
+
+  const wallData = toWall(wall);
+  const commentsByPost = new Map();
+  const comments = db
+    .prepare(
+      `SELECT comments.*
+       FROM comments
+       JOIN posts ON posts.id = comments.post_id
+       WHERE posts.wall_id = ?
+       ORDER BY comments.created_at ASC`
+    )
+    .all(wall.id)
+    .map(toComment);
+  for (const comment of comments) {
+    const list = commentsByPost.get(comment.postId) || [];
+    list.push(comment);
+    commentsByPost.set(comment.postId, list);
+  }
+
+  const posts = db
+    .prepare('SELECT * FROM posts WHERE wall_id = ? ORDER BY column_no ASC, order_no ASC, created_at ASC')
+    .all(wall.id)
+    .map(toPost);
+  const templateFields = wallData.postMode === 'worksheet' ? wallData.postTemplate?.fields || [] : [];
+  const rows = [
+    [
+      '담벼락 제목',
+      '담벼락 설명',
+      '컬럼 번호',
+      '컬럼 이름',
+      '순서',
+      '작성자',
+      ...(templateFields.length ? templateFields.map((field) => field.label) : ['내용']),
+      '좋아요 수',
+      '댓글',
+      '작성일',
+      '수정일'
+    ],
+    ...posts.map((post) => {
+      const postComments = commentsByPost.get(post.id) || [];
+      return [
+        wallData.title,
+        wallData.description,
+        post.column,
+        wallData.columnNames?.[post.column] || `${post.column}번 컬럼`,
+        post.order,
+        post.authorName || '익명',
+        ...(templateFields.length
+          ? templateFields.map((field) => post.templateAnswers?.[field.id] || '')
+          : [post.content]),
+        post.likeCount || 0,
+        postComments
+          .map((comment) => `${comment.authorName || '익명'}: ${comment.text} (${comment.createdAt})`)
+          .join('\n'),
+        post.createdAt,
+        post.updatedAt || ''
+      ];
+    })
+  ];
+  const csv = `\uFEFF${rows.map(csvRow).join('\n')}\n`;
+  const filename = encodeURIComponent(`${wallData.title || wall.id}-posts.csv`);
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${filename}`);
+  return res.send(csv);
 });
 
 app.delete('/api/walls/:id', requireUser, requireRole('teacher'), (req, res) => {
@@ -305,16 +437,26 @@ app.post('/api/posts', (req, res) => {
   const user = userFrom(req);
   if (wall.accessMode === 'login' && !user) return res.status(401).json({ error: 'unauthenticated' });
   const postId = id('post_');
+  const templateAnswers =
+    wall.postMode === 'worksheet'
+      ? normalizeTemplateAnswers(wall.postTemplate, req.body.templateAnswers)
+      : {};
+  const content =
+    wall.postMode === 'worksheet'
+      ? worksheetContent(wall.postTemplate, templateAnswers)
+      : String(req.body.content || '').trim();
+  if (!content) return res.status(400).json({ error: 'content-required' });
   db.prepare(
     `INSERT INTO posts
-     (id, wall_id, author_id, author_name, content, color, column_no, order_no, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+     (id, wall_id, author_id, author_name, content, template_answers, color, column_no, order_no, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     postId,
     wall.id,
     user?.uid || 'anonymous',
     String(req.body.authorName || user?.display_name || '익명'),
-    String(req.body.content || '').trim(),
+    content,
+    JSON.stringify(templateAnswers),
     req.body.color || 'bg-yellow-100',
     Number(req.body.column || 1),
     Number(req.body.order ?? Date.now()),
@@ -326,19 +468,31 @@ app.post('/api/posts', (req, res) => {
 app.patch('/api/posts/:id', requireUser, (req, res) => {
   const post = db.prepare('SELECT * FROM posts WHERE id = ?').get(req.params.id);
   if (!post) return res.status(404).json({ error: 'not-found' });
-  const wall = db.prepare('SELECT * FROM walls WHERE id = ?').get(post.wall_id);
-  const canEdit = post.author_id === req.user.uid || wall?.owner_id === req.user.uid;
+  const wall = toWall(db.prepare('SELECT * FROM walls WHERE id = ?').get(post.wall_id));
+  const canEdit = post.author_id === req.user.uid || wall?.ownerId === req.user.uid;
   if (!canEdit) return res.status(403).json({ error: 'forbidden' });
+  const templateAnswers =
+    req.body.templateAnswers == null
+      ? null
+      : normalizeTemplateAnswers(wall.postTemplate || { fields: [] }, req.body.templateAnswers);
+  const content =
+    templateAnswers == null
+      ? req.body.content == null
+        ? null
+        : String(req.body.content)
+      : worksheetContent(wall.postTemplate || { fields: [] }, templateAnswers);
   db.prepare(
     `UPDATE posts SET
       content = COALESCE(?, content),
+      template_answers = COALESCE(?, template_answers),
       color = COALESCE(?, color),
       column_no = COALESCE(?, column_no),
       order_no = COALESCE(?, order_no),
       updated_at = ?
      WHERE id = ?`
   ).run(
-    req.body.content == null ? null : String(req.body.content),
+    content,
+    templateAnswers == null ? null : JSON.stringify(templateAnswers),
     req.body.color == null ? null : req.body.color,
     req.body.column == null ? null : Number(req.body.column),
     req.body.order == null ? null : Number(req.body.order),
@@ -378,6 +532,21 @@ app.post('/api/posts/:id/toggle-like', requireUser, (req, res) => {
 
 app.post('/api/posts/layouts', requireUser, requireRole('teacher'), (req, res) => {
   const updates = Array.isArray(req.body.updates) ? req.body.updates : [];
+  const postIds = updates.map((item) => item.id).filter(Boolean);
+  if (postIds.length) {
+    const placeholders = postIds.map(() => '?').join(',');
+    const rows = db
+      .prepare(
+        `SELECT posts.id, walls.owner_id
+         FROM posts
+         JOIN walls ON walls.id = posts.wall_id
+         WHERE posts.id IN (${placeholders})`
+      )
+      .all(...postIds);
+    if (rows.length !== postIds.length || rows.some((row) => row.owner_id !== req.user.uid)) {
+      return res.status(403).json({ error: 'forbidden' });
+    }
+  }
   const update = db.prepare('UPDATE posts SET column_no = ?, order_no = ?, updated_at = ? WHERE id = ?');
   db.transaction(() => {
     for (const item of updates) update.run(Number(item.column), Number(item.order), now(), item.id);

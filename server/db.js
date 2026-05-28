@@ -53,6 +53,9 @@ export function toWall(row) {
     accessMode: row.access_mode,
     commentsEnabled: Boolean(row.comments_enabled),
     likesEnabled: Boolean(row.likes_enabled),
+    showAuthorNames: row.show_author_names == null ? true : Boolean(row.show_author_names),
+    postMode: row.post_mode || 'free',
+    postTemplate: json(row.post_template, { fields: [] }),
     ownerId: row.owner_id,
     ownerName: row.owner_name,
     backgroundTone: row.background_tone,
@@ -72,6 +75,7 @@ export function toPost(row) {
     authorId: row.author_id,
     authorName: row.author_name,
     content: row.content,
+    templateAnswers: json(row.template_answers, {}),
     color: row.color,
     column: row.column_no,
     order: row.order_no,
@@ -121,6 +125,9 @@ export function initDb() {
       access_mode TEXT NOT NULL DEFAULT 'login',
       comments_enabled INTEGER NOT NULL DEFAULT 1,
       likes_enabled INTEGER NOT NULL DEFAULT 1,
+      show_author_names INTEGER NOT NULL DEFAULT 1,
+      post_mode TEXT NOT NULL DEFAULT 'free',
+      post_template TEXT NOT NULL DEFAULT '{"fields":[]}',
       owner_id TEXT NOT NULL REFERENCES users(uid) ON DELETE CASCADE,
       owner_name TEXT NOT NULL,
       background_tone TEXT NOT NULL,
@@ -136,6 +143,7 @@ export function initDb() {
       author_id TEXT NOT NULL,
       author_name TEXT NOT NULL,
       content TEXT NOT NULL,
+      template_answers TEXT NOT NULL DEFAULT '{}',
       color TEXT NOT NULL,
       column_no INTEGER NOT NULL DEFAULT 1,
       order_no REAL NOT NULL,
@@ -160,6 +168,22 @@ export function initDb() {
     CREATE INDEX IF NOT EXISTS idx_posts_wall ON posts(wall_id);
     CREATE INDEX IF NOT EXISTS idx_comments_post ON comments(post_id);
   `);
+
+  const wallColumns = db.prepare('PRAGMA table_info(walls)').all();
+  if (!wallColumns.some((column) => column.name === 'show_author_names')) {
+    db.prepare('ALTER TABLE walls ADD COLUMN show_author_names INTEGER NOT NULL DEFAULT 1').run();
+  }
+  if (!wallColumns.some((column) => column.name === 'post_mode')) {
+    db.prepare("ALTER TABLE walls ADD COLUMN post_mode TEXT NOT NULL DEFAULT 'free'").run();
+  }
+  if (!wallColumns.some((column) => column.name === 'post_template')) {
+    db.prepare('ALTER TABLE walls ADD COLUMN post_template TEXT NOT NULL DEFAULT \'{"fields":[]}\'').run();
+  }
+
+  const postColumns = db.prepare('PRAGMA table_info(posts)').all();
+  if (!postColumns.some((column) => column.name === 'template_answers')) {
+    db.prepare("ALTER TABLE posts ADD COLUMN template_answers TEXT NOT NULL DEFAULT '{}'").run();
+  }
 
   const userCount = db.prepare('SELECT COUNT(*) AS count FROM users').get().count;
   if (userCount === 0) {

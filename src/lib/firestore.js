@@ -1,4 +1,4 @@
-import { apiFetch, subscribe } from './api';
+import { apiFetch, getToken, subscribe } from './api';
 
 export const colorOptions = [
   { name: '노랑', value: 'bg-yellow-100', swatch: '#fef3c7' },
@@ -55,6 +55,29 @@ export function updateWall(wallId, data) {
 
 export function deleteWall(wallId) {
   return apiFetch(`/api/walls/${wallId}`, { method: 'DELETE' });
+}
+
+export async function exportWallCsv(wallId) {
+  const headers = {};
+  const token = getToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const response = await fetch(`/api/walls/${wallId}/export.csv`, { headers });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    const error = new Error(data.error || 'export-failed');
+    error.status = response.status;
+    error.code = data.error || String(response.status);
+    throw error;
+  }
+
+  const blob = await response.blob();
+  const disposition = response.headers.get('Content-Disposition') || '';
+  const filenameMatch = disposition.match(/filename\*=UTF-8''([^;]+)/);
+  return {
+    blob,
+    filename: filenameMatch ? decodeURIComponent(filenameMatch[1]) : 'wall-posts.csv'
+  };
 }
 
 export function createPost(data) {

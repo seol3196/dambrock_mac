@@ -1,6 +1,7 @@
 import {
   ArrowLeft,
   Copy,
+  Download,
   Plus,
   QrCode,
   Send,
@@ -18,9 +19,11 @@ import {
   colorOptions,
   createPost,
   deleteWallColumn,
+  exportWallCsv,
   subscribePosts,
   subscribeWall,
   updatePostLayouts,
+  updatePost,
   updateWall,
   wallBackgroundOptions
 } from '../lib/firestore';
@@ -101,6 +104,23 @@ function nextColumnPostPlacement(postsByColumn, column) {
   };
 }
 
+function worksheetFields(wall) {
+  return wall?.postMode === 'worksheet' && Array.isArray(wall?.postTemplate?.fields)
+    ? wall.postTemplate.fields
+    : [];
+}
+
+function emptyWorksheetAnswers(fields) {
+  return Object.fromEntries(fields.map((field) => [field.id, '']));
+}
+
+function worksheetSummary(fields, answers) {
+  return fields
+    .map((field) => `${field.label}\n${answers[field.id] || ''}`.trim())
+    .filter(Boolean)
+    .join('\n\n');
+}
+
 export default function WallPage() {
   const { wallId } = useParams();
   const location = useLocation();
@@ -112,7 +132,9 @@ export default function WallPage() {
   const [shareOpen, setShareOpen] = useState(false);
   const [shareMessage, setShareMessage] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [editingWorksheetPost, setEditingWorksheetPost] = useState(null);
   const [draggingPost, setDraggingPost] = useState(null);
+  const [dragPreview, setDragPreview] = useState(null);
   const [columnNameDrafts, setColumnNameDrafts] = useState({});
   const [editingColumnName, setEditingColumnName] = useState(null);
   const [wallError, setWallError] = useState('');
@@ -121,7 +143,8 @@ export default function WallPage() {
   );
   const [form, setForm] = useState({
     content: '',
-    color: colorOptions[0].value
+    color: colorOptions[0].value,
+    templateAnswers: {}
   });
   const [settingsForm, setSettingsForm] = useState(null);
   const origin = typeof window === 'undefined' ? '' : window.location.origin;
@@ -159,6 +182,8 @@ export default function WallPage() {
     }),
     [wall?.backgroundTone]
   );
+  const templateFields = useMemo(() => worksheetFields(wall), [wall]);
+  const isWorksheetWall = wall?.postMode === 'worksheet';
 
   useEffect(() => {
     if (typeof window === 'undefined') return undefined;
@@ -192,6 +217,9 @@ export default function WallPage() {
             accessMode: nextWall.accessMode || 'login',
             commentsEnabled: nextWall.commentsEnabled ?? true,
             likesEnabled: nextWall.likesEnabled ?? true,
+            showAuthorNames: nextWall.showAuthorNames ?? true,
+            postMode: nextWall.postMode || 'free',
+            postTemplate: nextWall.postTemplate || { fields: [] },
             backgroundTone: nextWall.backgroundTone || wallBackgroundOptions[0].value
           });
         }
@@ -269,10 +297,24 @@ export default function WallPage() {
 
   async function submitPost(event) {
     event.preventDefault();
-    if (!form.content.trim()) return;
     if (loading) return;
     if (wall?.accessMode === 'login' && !user) {
       alert('로그인이 필요한 담벼락입니다. 다시 로그인해 주세요.');
+      return;
+    }
+
+    const templateAnswers = Object.fromEntries(
+      templateFields.map((field) => [field.id, String(form.templateAnswers?.[field.id] || '').trim()])
+    );
+    if (isWorksheetWall) {
+      const missingField = templateFields.find(
+        (field) => field.required !== false && !templateAnswers[field.id]
+      );
+      if (missingField) {
+        alert(`${missingField.label} 항목을 입력해 주세요.`);
+        return;
+      }
+    } else if (!form.content.trim()) {
       return;
     }
 
@@ -280,14 +322,62 @@ export default function WallPage() {
       wallId,
       authorId: user?.uid || 'anonymous',
       authorName: profile?.displayName || displayId || '익명',
-      content: form.content.trim(),
+      content: isWorksheetWall ? worksheetSummary(templateFields, templateAnswers) : form.content.trim(),
+      templateAnswers: isWorksheetWall ? templateAnswers : undefined,
       color: form.color,
       ...(sharedColumn
         ? nextColumnPostPlacement(postsByColumn, sharedColumn)
         : nextPostPlacement(postsByColumn, columnNumbers))
     });
 
-    setForm({ content: '', color: colorOptions[0].value });
+    setForm({ content: '', color: colorOptions[0].value, templateAnswers: emptyWorksheetAnswers(templateFields) });
+    setModalOpen(false);
+  }
+
+  function openCreatePostModal() {
+    setEditingWorksheetPost(null);
+    setForm({
+      content: '',
+      color: colorOptions[0].value,
+      templateAnswers: emptyWorksheetAnswers(templateFields)
+    });
+    setModalOpen(true);
+  }
+
+  function openWorksheetEditModal(post) {
+    setEditingWorksheetPost(post);
+    setForm({
+      content: post.content || '',
+      color: post.color || colorOptions[0].value,
+      templateAnswers: {
+        ...emptyWorksheetAnswers(templateFields),
+        ...(post.templateAnswers || {})
+      }
+    });
+    setModalOpen(true);
+  }
+
+  async function saveWorksheetEdit(event) {
+    event.preventDefault();
+    if (!editingWorksheetPost) return;
+
+    const templateAnswers = Object.fromEntries(
+      templateFields.map((field) => [field.id, String(form.templateAnswers?.[field.id] || '').trim()])
+    );
+    const missingField = templateFields.find(
+      (field) => field.required !== false && !templateAnswers[field.id]
+    );
+    if (missingField) {
+      alert(`${missingField.label} 항목을 입력해 주세요.`);
+      return;
+    }
+
+    await updatePost(editingWorksheetPost.id, {
+      color: form.color,
+      templateAnswers
+    });
+    setEditingWorksheetPost(null);
+    setForm({ content: '', color: colorOptions[0].value, templateAnswers: emptyWorksheetAnswers(templateFields) });
     setModalOpen(false);
   }
 
@@ -385,7 +475,7 @@ export default function WallPage() {
     const insertIndex =
       targetIndex === -1 ? targetColumnPosts.length : targetIndex + (placement === 'after' ? 1 : 0);
 
-    targetColumnPosts.splice(insertIndex, 0, { ...draggingPost, column });
+    targetColumnPosts.splice(insertIndex, 0, draggingPost);
 
     const updates = [];
     for (const columnNumber of columnNumbers) {
@@ -400,6 +490,36 @@ export default function WallPage() {
       await updatePostLayouts(updates);
     }
     setDraggingPost(null);
+    setDragPreview(null);
+  }
+
+  function showColumnDropPreview(column) {
+    if (!draggingPost) return;
+    setDragPreview({ column, targetPostId: null, placement: 'after' });
+  }
+
+  function showPostDropPreview(targetPost, placement, column) {
+    if (!draggingPost || draggingPost.id === targetPost.id) {
+      setDragPreview(null);
+      return;
+    }
+    setDragPreview({ column, targetPostId: targetPost.id, placement });
+  }
+
+  async function downloadCsv() {
+    try {
+      const { blob, filename } = await exportWallCsv(wallId);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch {
+      alert('CSV 파일을 추출하지 못했습니다. 잠시 후 다시 시도해 주세요.');
+    }
   }
 
   if (wallMissing) {
@@ -453,6 +573,14 @@ export default function WallPage() {
             <div className="flex items-center gap-2">
               <button
                 type="button"
+                onClick={downloadCsv}
+                className="inline-flex items-center gap-2 rounded-[10px] border border-stone-300 bg-white px-4 py-2 text-sm font-bold text-stone-800 shadow-sm"
+              >
+                <Download size={16} />
+                CSV
+              </button>
+              <button
+                type="button"
                 onClick={() => setSettingsOpen(true)}
                 className="inline-flex items-center gap-2 rounded-[10px] border border-stone-300 bg-white px-4 py-2 text-sm font-bold text-stone-800 shadow-sm"
               >
@@ -492,7 +620,9 @@ export default function WallPage() {
                 key={column}
                 data-testid={`wall-column-${column}`}
                 onDragOver={(event) => {
-                  if (canManageWall) event.preventDefault();
+                  if (!canManageWall || !draggingPost) return;
+                  event.preventDefault();
+                  showColumnDropPreview(column);
                 }}
                 onDrop={(event) => {
                   event.preventDefault();
@@ -559,12 +689,27 @@ export default function WallPage() {
                       wall={wall || {}}
                       isTeacherView={canManageWall}
                       onDragStart={setDraggingPost}
-                      onDragEnd={() => setDraggingPost(null)}
+                      onEditWorksheet={openWorksheetEditModal}
+                      dropPreview={
+                        dragPreview?.column === column && dragPreview?.targetPostId === post.id
+                          ? dragPreview.placement
+                          : null
+                      }
+                      onDragEnd={() => {
+                        setDraggingPost(null);
+                        setDragPreview(null);
+                      }}
+                      onDragPreview={(targetPost, placement) =>
+                        showPostDropPreview(targetPost, placement, column)
+                      }
                       onDropOnPost={(targetPost, placement) =>
                         movePostToColumn(column, targetPost.id, placement)
                       }
                     />
                   ))}
+                  {dragPreview?.column === column && dragPreview.targetPostId == null && (
+                    <div className="h-1 rounded-full bg-stone-500/45 shadow-sm" />
+                  )}
                 </div>
               </div>
             ))}
@@ -581,7 +726,7 @@ export default function WallPage() {
       <button
         type="button"
         aria-label="글쓰기"
-        onClick={() => setModalOpen(true)}
+        onClick={openCreatePostModal}
         className="fixed bottom-6 right-6 grid h-16 w-16 place-items-center rounded-full bg-rose-500 text-white shadow-paper transition hover:scale-105"
       >
         <Plus size={30} />
@@ -652,6 +797,21 @@ export default function WallPage() {
                   }
                 />
               </label>
+              <label className="flex items-center justify-between rounded-[10px] border border-stone-200 px-4 py-3">
+                <span>
+                  <b className="block text-sm text-stone-800">작성자 이름 표시</b>
+                  <span className="text-xs text-stone-500">
+                    끄면 학생 포스트잇과 댓글 작성자 이름을 숨깁니다.
+                  </span>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={settingsForm.showAuthorNames}
+                  onChange={(e) =>
+                    setSettingsForm({ ...settingsForm, showAuthorNames: e.target.checked })
+                  }
+                />
+              </label>
               <div>
                 <p className="mb-2 text-sm font-bold text-stone-700">코르크 배경 색상</p>
                 <div className="grid grid-cols-3 gap-2">
@@ -699,26 +859,75 @@ export default function WallPage() {
       {modalOpen && (
         <div className="fixed inset-0 z-20 grid place-items-center bg-stone-950/45 px-4">
           <form
-            onSubmit={submitPost}
-            className="w-full max-w-xl rounded-[18px] bg-white p-5 shadow-paper"
+            onSubmit={editingWorksheetPost ? saveWorksheetEdit : submitPost}
+            className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-[18px] bg-white p-5 shadow-paper"
           >
             <div className="flex items-center justify-between">
-              <h2 className="text-xl font-bold">포스트잇 작성</h2>
+              <h2 className="text-xl font-bold">
+                {isWorksheetWall ? '학습지 포스트잇 작성' : '포스트잇 작성'}
+              </h2>
               <button
                 type="button"
                 aria-label="닫기"
-                onClick={() => setModalOpen(false)}
+                onClick={() => {
+                  setModalOpen(false);
+                  setEditingWorksheetPost(null);
+                }}
                 className="rounded-full p-2 hover:bg-stone-100"
               >
                 <X size={18} />
               </button>
             </div>
-            <textarea
-              value={form.content}
-              onChange={(e) => setForm({ ...form, content: e.target.value })}
-              className="mt-4 min-h-40 w-full resize-y rounded-[10px] border border-stone-200 p-3 text-base leading-7 outline-none focus:border-amber-500"
-              placeholder="생각이나 링크를 자유롭게 적어보세요."
-            />
+            {isWorksheetWall ? (
+              <div className="mt-4 space-y-4">
+                {templateFields.map((field) => (
+                  <label key={field.id} className="block">
+                    <span className="mb-2 block text-sm font-bold text-stone-800">
+                      {field.label}
+                      {field.required !== false && <span className="text-rose-500"> *</span>}
+                    </span>
+                    {field.type === 'longText' ? (
+                      <textarea
+                        value={form.templateAnswers?.[field.id] || ''}
+                        maxLength={1000}
+                        onChange={(event) =>
+                          setForm({
+                            ...form,
+                            templateAnswers: {
+                              ...(form.templateAnswers || {}),
+                              [field.id]: event.target.value
+                            }
+                          })
+                        }
+                        className="min-h-28 w-full resize-y rounded-[10px] border border-stone-200 p-3 text-base leading-7 outline-none focus:border-amber-500"
+                      />
+                    ) : (
+                      <input
+                        value={form.templateAnswers?.[field.id] || ''}
+                        maxLength={100}
+                        onChange={(event) =>
+                          setForm({
+                            ...form,
+                            templateAnswers: {
+                              ...(form.templateAnswers || {}),
+                              [field.id]: event.target.value
+                            }
+                          })
+                        }
+                        className="h-11 w-full rounded-[10px] border border-stone-200 px-3 text-base outline-none focus:border-amber-500"
+                      />
+                    )}
+                  </label>
+                ))}
+              </div>
+            ) : (
+              <textarea
+                value={form.content}
+                onChange={(e) => setForm({ ...form, content: e.target.value })}
+                className="mt-4 min-h-40 w-full resize-y rounded-[10px] border border-stone-200 p-3 text-base leading-7 outline-none focus:border-amber-500"
+                placeholder="생각이나 링크를 자유롭게 적어보세요."
+              />
+            )}
             <div className="mt-4 flex flex-wrap gap-2">
               {colorOptions.map((color) => (
                 <button
@@ -738,7 +947,7 @@ export default function WallPage() {
               className="mt-5 inline-flex h-11 w-full items-center justify-center gap-2 rounded-[10px] bg-stone-900 font-bold text-white"
             >
               <Send size={18} />
-              올리기
+              {editingWorksheetPost ? '수정 저장' : '올리기'}
             </button>
           </form>
         </div>
