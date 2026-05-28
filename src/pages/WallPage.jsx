@@ -2,6 +2,7 @@ import {
   ArrowLeft,
   Copy,
   Download,
+  MoreHorizontal,
   Plus,
   QrCode,
   Send,
@@ -132,7 +133,8 @@ export default function WallPage() {
   const [shareOpen, setShareOpen] = useState(false);
   const [shareMessage, setShareMessage] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [editingWorksheetPost, setEditingWorksheetPost] = useState(null);
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const [editingPost, setEditingPost] = useState(null);
   const [draggingPost, setDraggingPost] = useState(null);
   const [dragPreview, setDragPreview] = useState(null);
   const [columnNameDrafts, setColumnNameDrafts] = useState({});
@@ -149,9 +151,20 @@ export default function WallPage() {
   const [settingsForm, setSettingsForm] = useState(null);
   const origin = typeof window === 'undefined' ? '' : window.location.origin;
   const shareUrl = `${origin}/wall/${wallId}`;
-  const canManageWall = Boolean(user && role === 'teacher' && wall?.ownerId === user.uid);
+  const searchParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
+  const readOnlyMode = searchParams.get('view') === 'readonly';
+  const readOnlyAuthorMode = searchParams.get('authors');
+  const effectiveShowAuthorNames =
+    readOnlyMode && readOnlyAuthorMode
+      ? readOnlyAuthorMode !== 'hidden'
+      : wall?.showAuthorNames !== false;
+  const displayWall = useMemo(
+    () => (wall ? { ...wall, showAuthorNames: effectiveShowAuthorNames } : wall),
+    [effectiveShowAuthorNames, wall]
+  );
+  const canManageWall = Boolean(!readOnlyMode && user && role === 'teacher' && wall?.ownerId === user.uid);
   const columnCount = clampColumnCount(wall?.columnCount ?? 4);
-  const requestedColumn = Number(new URLSearchParams(location.search).get('column'));
+  const requestedColumn = Number(searchParams.get('column'));
   const columnNumbers = useMemo(
     () => Array.from({ length: columnCount }, (_, index) => index + 1),
     [columnCount]
@@ -211,32 +224,35 @@ export default function WallPage() {
               [editingColumnName]: currentDrafts[editingColumnName] ?? nextWall.columnNames?.[editingColumnName] ?? ''
             };
           });
-          setSettingsForm({
-            title: nextWall.title || '',
-            description: nextWall.description || '',
-            accessMode: nextWall.accessMode || 'login',
-            commentsEnabled: nextWall.commentsEnabled ?? true,
-            likesEnabled: nextWall.likesEnabled ?? true,
-            showAuthorNames: nextWall.showAuthorNames ?? true,
-            postMode: nextWall.postMode || 'free',
-            postTemplate: nextWall.postTemplate || { fields: [] },
-            backgroundTone: nextWall.backgroundTone || wallBackgroundOptions[0].value
-          });
+          if (!settingsOpen) {
+            setSettingsForm({
+              title: nextWall.title || '',
+              description: nextWall.description || '',
+              accessMode: nextWall.accessMode || 'login',
+              commentsEnabled: nextWall.commentsEnabled ?? true,
+              likesEnabled: nextWall.likesEnabled ?? true,
+              showAuthorNames: nextWall.showAuthorNames ?? true,
+              postMode: nextWall.postMode || 'free',
+              postTemplate: nextWall.postTemplate || { fields: [] },
+              backgroundTone: nextWall.backgroundTone || wallBackgroundOptions[0].value
+            });
+          }
         }
       },
       (error) => {
         setWall(null);
         setWallMissing(error?.status === 404);
         setWallError(error?.status === 401 || error?.status === 403 ? 'permission-denied' : 'load-failed');
-      }
+      },
+      readOnlyMode ? { view: 'readonly' } : {}
     );
 
     return unsubscribe;
-  }, [editingColumnName, loading, wallId]);
+  }, [editingColumnName, loading, readOnlyMode, settingsOpen, wallId]);
 
   useEffect(() => {
     if (loading || !wall) return undefined;
-    if (wall.accessMode === 'login' && !user) return undefined;
+    if (wall.accessMode === 'login' && !user && !readOnlyMode) return undefined;
 
     const unsubscribe = subscribePosts(
       wallId,
@@ -254,11 +270,12 @@ export default function WallPage() {
       (error) => {
         setPosts([]);
         setWallError(error?.status === 401 || error?.status === 403 ? 'permission-denied' : 'load-failed');
-      }
+      },
+      readOnlyMode ? { view: 'readonly' } : {}
     );
 
     return unsubscribe;
-  }, [loading, user, wall, wallId]);
+  }, [loading, readOnlyMode, user, wall, wallId]);
 
   const postsByColumn = useMemo(() => {
     const grouped = Object.fromEntries(columnNumbers.map((column) => [column, []]));
@@ -291,12 +308,13 @@ export default function WallPage() {
     [displayedColumnNumbers, postsByColumn]
   );
 
-  if (!loading && wall?.accessMode === 'login' && !user) {
+  if (!loading && wall?.accessMode === 'login' && !user && !readOnlyMode) {
     return <Navigate to="/" replace state={{ from: location }} />;
   }
 
   async function submitPost(event) {
     event.preventDefault();
+    if (readOnlyMode) return;
     if (loading) return;
     if (wall?.accessMode === 'login' && !user) {
       alert('로그인이 필요한 담벼락입니다. 다시 로그인해 주세요.');
@@ -335,7 +353,8 @@ export default function WallPage() {
   }
 
   function openCreatePostModal() {
-    setEditingWorksheetPost(null);
+    if (readOnlyMode) return;
+    setEditingPost(null);
     setForm({
       content: '',
       color: colorOptions[0].value,
@@ -344,8 +363,9 @@ export default function WallPage() {
     setModalOpen(true);
   }
 
-  function openWorksheetEditModal(post) {
-    setEditingWorksheetPost(post);
+  function openEditPostModal(post) {
+    if (readOnlyMode) return;
+    setEditingPost(post);
     setForm({
       content: post.content || '',
       color: post.color || colorOptions[0].value,
@@ -357,9 +377,23 @@ export default function WallPage() {
     setModalOpen(true);
   }
 
-  async function saveWorksheetEdit(event) {
+  async function savePostEdit(event) {
     event.preventDefault();
-    if (!editingWorksheetPost) return;
+    if (!editingPost) return;
+
+    if (!isWorksheetWall) {
+      const nextContent = form.content.trim();
+      if (!nextContent) return;
+
+      await updatePost(editingPost.id, {
+        content: nextContent,
+        color: form.color
+      });
+      setEditingPost(null);
+      setForm({ content: '', color: colorOptions[0].value, templateAnswers: emptyWorksheetAnswers(templateFields) });
+      setModalOpen(false);
+      return;
+    }
 
     const templateAnswers = Object.fromEntries(
       templateFields.map((field) => [field.id, String(form.templateAnswers?.[field.id] || '').trim()])
@@ -372,17 +406,25 @@ export default function WallPage() {
       return;
     }
 
-    await updatePost(editingWorksheetPost.id, {
+    await updatePost(editingPost.id, {
       color: form.color,
       templateAnswers
     });
-    setEditingWorksheetPost(null);
+    setEditingPost(null);
     setForm({ content: '', color: colorOptions[0].value, templateAnswers: emptyWorksheetAnswers(templateFields) });
     setModalOpen(false);
   }
 
   function columnShareUrl(column) {
     return `${shareUrl}?column=${column}`;
+  }
+
+  function publicViewShareUrl(authors) {
+    const params = new URLSearchParams({
+      view: 'readonly',
+      authors
+    });
+    return `${shareUrl}?${params.toString()}`;
   }
 
   async function copyShareUrl(url = shareUrl, label = '링크') {
@@ -522,6 +564,10 @@ export default function WallPage() {
     }
   }
 
+  function closeActions() {
+    setActionsOpen(false);
+  }
+
   if (wallMissing) {
     return (
       <main className="felt-bg grid min-h-screen place-items-center px-4">
@@ -532,7 +578,7 @@ export default function WallPage() {
     );
   }
 
-  if (!loading && wallError === 'permission-denied' && !user) {
+  if (!loading && wallError === 'permission-denied' && !user && !readOnlyMode) {
     return <Navigate to="/" replace state={{ from: location }} />;
   }
 
@@ -552,7 +598,7 @@ export default function WallPage() {
   return (
     <main className="cork-bg min-h-screen" style={corkStyle}>
       <header className="sticky top-0 z-10 border-b border-stone-900/10 bg-white/88 backdrop-blur">
-        <div className="mx-auto flex w-full max-w-[1600px] items-center justify-between gap-4 px-5 py-4">
+        <div className="mx-auto flex w-full max-w-[1600px] items-start justify-between gap-3 px-4 py-3 sm:items-center sm:px-5 sm:py-4">
           <div className="min-w-0">
             <Link
               to={homePath(role)}
@@ -561,7 +607,7 @@ export default function WallPage() {
               <ArrowLeft size={16} />
               돌아가기
             </Link>
-            <h1 className="truncate text-2xl font-bold text-stone-950 sm:text-4xl">
+            <h1 className="line-clamp-2 text-2xl font-bold leading-tight text-stone-950 sm:truncate sm:text-4xl">
               {wall?.title || '담벼락'}
             </h1>
             <p className="mt-1 text-sm text-stone-600">
@@ -570,7 +616,53 @@ export default function WallPage() {
           </div>
 
           {canManageWall && (
-            <div className="flex items-center gap-2">
+            <div className="relative shrink-0">
+              <button
+                type="button"
+                onClick={() => setActionsOpen((value) => !value)}
+                className="grid h-10 w-10 place-items-center rounded-[10px] border border-stone-300 bg-white text-stone-800 shadow-sm sm:hidden"
+                aria-label="담벼락 메뉴"
+              >
+                <MoreHorizontal size={18} />
+              </button>
+              {actionsOpen && (
+                <div className="absolute right-0 top-12 z-20 w-36 overflow-hidden rounded-[12px] border border-stone-200 bg-white shadow-soft sm:hidden">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      closeActions();
+                      downloadCsv();
+                    }}
+                    className="flex w-full items-center gap-2 px-3 py-3 text-left text-sm font-bold text-stone-800 hover:bg-stone-50"
+                  >
+                    <Download size={15} />
+                    CSV
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      closeActions();
+                      setSettingsOpen(true);
+                    }}
+                    className="flex w-full items-center gap-2 px-3 py-3 text-left text-sm font-bold text-stone-800 hover:bg-stone-50"
+                  >
+                    <Settings2 size={15} />
+                    설정
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      closeActions();
+                      setShareOpen(true);
+                    }}
+                    className="flex w-full items-center gap-2 px-3 py-3 text-left text-sm font-bold text-stone-800 hover:bg-stone-50"
+                  >
+                    <Share2 size={15} />
+                    공유
+                  </button>
+                </div>
+              )}
+            <div className="hidden items-center gap-2 sm:flex">
               <button
                 type="button"
                 onClick={downloadCsv}
@@ -595,6 +687,7 @@ export default function WallPage() {
                 <Share2 size={16} />
                 공유
               </button>
+            </div>
             </div>
           )}
         </div>
@@ -686,10 +779,11 @@ export default function WallPage() {
                     <PostCard
                       key={post.id}
                       post={post}
-                      wall={wall || {}}
+                      wall={displayWall || {}}
                       isTeacherView={canManageWall}
+                      readOnly={readOnlyMode}
                       onDragStart={setDraggingPost}
-                      onEditWorksheet={openWorksheetEditModal}
+                      onEditPost={openEditPostModal}
                       dropPreview={
                         dragPreview?.column === column && dragPreview?.targetPostId === post.id
                           ? dragPreview.placement
@@ -723,14 +817,16 @@ export default function WallPage() {
         </div>
       </section>
 
-      <button
-        type="button"
-        aria-label="글쓰기"
-        onClick={openCreatePostModal}
-        className="fixed bottom-6 right-6 grid h-16 w-16 place-items-center rounded-full bg-rose-500 text-white shadow-paper transition hover:scale-105"
-      >
-        <Plus size={30} />
-      </button>
+      {!readOnlyMode && (
+        <button
+          type="button"
+          aria-label="글쓰기"
+          onClick={openCreatePostModal}
+          className="fixed bottom-6 right-6 grid h-16 w-16 place-items-center rounded-full bg-rose-500 text-white shadow-paper transition hover:scale-105"
+        >
+          <Plus size={30} />
+        </button>
+      )}
 
       {settingsOpen && canManageWall && settingsForm && (
         <div className="fixed inset-0 z-30 grid place-items-center bg-stone-950/45 px-4">
@@ -859,7 +955,7 @@ export default function WallPage() {
       {modalOpen && (
         <div className="fixed inset-0 z-20 grid place-items-center bg-stone-950/45 px-4">
           <form
-            onSubmit={editingWorksheetPost ? saveWorksheetEdit : submitPost}
+            onSubmit={editingPost ? savePostEdit : submitPost}
             className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-[18px] bg-white p-5 shadow-paper"
           >
             <div className="flex items-center justify-between">
@@ -871,7 +967,7 @@ export default function WallPage() {
                 aria-label="닫기"
                 onClick={() => {
                   setModalOpen(false);
-                  setEditingWorksheetPost(null);
+                  setEditingPost(null);
                 }}
                 className="rounded-full p-2 hover:bg-stone-100"
               >
@@ -947,7 +1043,7 @@ export default function WallPage() {
               className="mt-5 inline-flex h-11 w-full items-center justify-center gap-2 rounded-[10px] bg-stone-900 font-bold text-white"
             >
               <Send size={18} />
-              {editingWorksheetPost ? '수정 저장' : '올리기'}
+              {editingPost ? '수정 저장' : '올리기'}
             </button>
           </form>
         </div>
@@ -984,6 +1080,38 @@ export default function WallPage() {
                   <Copy size={13} />
                   복사
                 </button>
+              </div>
+            </div>
+
+            <div className="mt-4 rounded-[12px] border border-stone-200 bg-stone-50 p-3 text-sm text-stone-700">
+              <p className="font-bold text-stone-900">공개보기 링크</p>
+              <p className="mt-1 text-xs text-stone-500">이 링크에서는 글쓰기 없이 보기만 가능합니다.</p>
+              <div className="mt-3 space-y-2">
+                {[
+                  ['visible', '작성자 표시'],
+                  ['hidden', '작성자 숨김']
+                ].map(([authors, label]) => {
+                  const url = publicViewShareUrl(authors);
+                  return (
+                    <div
+                      key={authors}
+                      className="flex items-center gap-2 rounded-[10px] bg-white/70 px-3 py-2"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-bold text-stone-800">{label}</p>
+                        <p className="truncate text-xs text-stone-500">{url}</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => copyShareUrl(url, `${label} 공개보기 링크`)}
+                        className="inline-flex shrink-0 items-center gap-1 rounded-[8px] border border-stone-200 px-2.5 py-1.5 text-xs font-bold text-stone-700 hover:bg-stone-50"
+                      >
+                        <Copy size={13} />
+                        복사
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
             </div>
 

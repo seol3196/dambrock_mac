@@ -293,7 +293,7 @@ app.post('/api/walls', requireUser, requireRole('teacher'), (req, res) => {
 app.get('/api/walls/:id', (req, res) => {
   const wall = toWall(db.prepare('SELECT * FROM walls WHERE id = ?').get(req.params.id));
   if (!wall) return res.status(404).json({ error: 'not-found' });
-  if (wall.accessMode === 'login' && !userFrom(req)) {
+  if (wall.accessMode === 'login' && !userFrom(req) && req.query.view !== 'readonly') {
     return res.status(401).json({ error: 'unauthenticated' });
   }
   res.json({ wall });
@@ -424,7 +424,7 @@ app.get('/api/posts', (req, res) => {
   if (!wallId) return res.status(400).json({ error: 'wallId-required' });
   const wall = toWall(db.prepare('SELECT * FROM walls WHERE id = ?').get(wallId));
   if (!wall) return res.status(404).json({ error: 'not-found' });
-  if (wall.accessMode === 'login' && !userFrom(req)) {
+  if (wall.accessMode === 'login' && !userFrom(req) && req.query.view !== 'readonly') {
     return res.status(401).json({ error: 'unauthenticated' });
   }
   const rows = db.prepare('SELECT * FROM posts WHERE wall_id = ? ORDER BY order_no ASC').all(wallId);
@@ -595,7 +595,7 @@ app.get('/api/comments', (req, res) => {
   const post = db.prepare('SELECT * FROM posts WHERE id = ?').get(postId);
   if (!post) return res.status(404).json({ error: 'not-found' });
   const wall = toWall(db.prepare('SELECT * FROM walls WHERE id = ?').get(post.wall_id));
-  if (wall?.accessMode === 'login' && !userFrom(req)) {
+  if (wall?.accessMode === 'login' && !userFrom(req) && req.query.view !== 'readonly') {
     return res.status(401).json({ error: 'unauthenticated' });
   }
   const rows = db.prepare('SELECT * FROM comments WHERE post_id = ? ORDER BY created_at ASC').all(postId);

@@ -39,20 +39,20 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="felt-bg grid min-h-screen place-items-center px-4 py-10">
+    <main className="felt-bg grid min-h-screen place-items-center px-3 py-6 sm:px-4 sm:py-10">
       <section className="grid w-full max-w-5xl overflow-hidden rounded-[8px] bg-white shadow-soft md:grid-cols-[1.1fr_0.9fr]">
-        <div className="cork-bg relative min-h-[420px] p-8">
-          <div className="absolute left-10 top-12 rounded-[6px] bg-yellow-100 p-6 shadow-paper">
-            <p className="font-hand text-5xl">오늘의 생각</p>
+        <div className="cork-bg relative flex min-h-[240px] flex-col gap-5 p-4 sm:min-h-[320px] sm:p-8 md:min-h-[420px] md:block">
+          <div className="max-w-[calc(100%-0.5rem)] rounded-[6px] bg-yellow-100 p-4 shadow-paper sm:w-fit sm:max-w-full md:absolute md:left-10 md:top-12 md:p-6">
+            <p className="font-hand text-4xl sm:text-5xl">오늘의 생각</p>
             <p className="mt-2 text-stone-700">친구들과 따뜻하게 나누어요.</p>
           </div>
-          <div className="absolute bottom-16 right-10 rounded-[6px] bg-rose-100 p-5 shadow-paper">
+          <div className="max-w-[calc(100%-0.5rem)] self-end rounded-[6px] bg-rose-100 p-4 shadow-paper sm:w-fit sm:max-w-full sm:p-5 md:absolute md:bottom-16 md:right-10">
             <p className="font-hand text-4xl">담벼락</p>
           </div>
         </div>
-        <form onSubmit={submit} className="flex flex-col justify-center p-8">
+        <form onSubmit={submit} className="flex min-w-0 flex-col justify-center p-4 sm:p-8">
           <p className="text-sm font-bold text-amber-700">학급 소통 노트</p>
-          <h1 className="mt-2 text-4xl font-bold text-stone-950">담벼락</h1>
+          <h1 className="mt-2 text-3xl font-bold text-stone-950 sm:text-4xl">담벼락</h1>
           <label className="mt-8 block">
             <span className="mb-2 block text-sm font-bold text-stone-700">ID</span>
             <span className="flex items-center gap-2 rounded-[8px] border border-stone-200 bg-stone-50 px-3">

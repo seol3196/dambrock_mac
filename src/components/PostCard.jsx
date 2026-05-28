@@ -1,16 +1,14 @@
 import {
-  Check,
   ExternalLink,
   GripVertical,
   Heart,
   MessageCircle,
   Pencil,
-  Trash2,
-  X
+  Trash2
 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext.jsx';
-import { deletePost, toggleLike, updatePost } from '../lib/firestore';
+import { deletePost, toggleLike } from '../lib/firestore';
 import { dateText, parseTextSegments } from '../lib/ui';
 import CommentBox from './CommentBox.jsx';
 
@@ -18,31 +16,31 @@ export default function PostCard({
   post,
   wall,
   isTeacherView = false,
+  readOnly = false,
   dropPreview,
   onDragStart,
   onDragEnd,
   onDragPreview,
-  onEditWorksheet,
+  onEditPost,
   onDropOnPost
 }) {
   const { user, role } = useAuth();
   const [commentsOpen, setCommentsOpen] = useState(false);
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(post.content);
   const liked = Boolean(user && post.likedBy?.[user.uid]);
   const likeCount = post.likeCount || Object.keys(post.likedBy || {}).length;
   const canDelete =
-    user && (post.authorId === user.uid || (role === 'teacher' && wall.ownerId === user.uid));
+    !readOnly &&
+    user &&
+    (post.authorId === user.uid || (role === 'teacher' && wall.ownerId === user.uid));
   const canEdit = Boolean(
-    user && (post.authorId === user.uid || (role === 'teacher' && wall.ownerId === user.uid))
+    !readOnly &&
+      user &&
+      (post.authorId === user.uid || (role === 'teacher' && wall.ownerId === user.uid))
   );
-  const canDrag = Boolean(isTeacherView && role === 'teacher' && wall.ownerId === user.uid);
+  const canDrag = Boolean(!readOnly && isTeacherView && role === 'teacher' && wall.ownerId === user.uid);
   const isWorksheetPost = wall.postMode === 'worksheet';
   const worksheetFields = Array.isArray(wall.postTemplate?.fields) ? wall.postTemplate.fields : [];
-
-  useEffect(() => {
-    setDraft(post.content);
-  }, [post.content]);
+  const hiddenAuthorLabel = `비공개(${post.authorId === wall.ownerId ? '교사' : '학생'})`;
 
   async function handleLike() {
     if (!user) {
@@ -50,13 +48,6 @@ export default function PostCard({
       return;
     }
     await toggleLike(post.id);
-  }
-
-  async function saveEdit() {
-    const next = draft.trim();
-    if (!next) return;
-    await updatePost(post.id, { content: next });
-    setEditing(false);
   }
 
   return (
@@ -104,14 +95,11 @@ export default function PostCard({
           )}
         </div>
         <div className="flex items-center gap-1">
-          {canEdit && !editing && (
+          {canEdit && (
             <button
               type="button"
               aria-label="게시글 수정"
-              onClick={() => {
-                if (isWorksheetPost) onEditWorksheet?.(post);
-                else setEditing(true);
-              }}
+              onClick={() => onEditPost?.(post)}
               className="rounded-full bg-white/75 p-1.5 text-stone-600 hover:text-stone-950"
             >
               <Pencil size={15} />
@@ -130,47 +118,20 @@ export default function PostCard({
         </div>
       </div>
 
-      {editing && !isWorksheetPost ? (
-        <div>
-          <textarea
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            className="min-h-40 w-full rounded-[8px] border border-stone-200 bg-white/80 p-3 text-base leading-7 outline-none focus:border-amber-500"
-          />
-          <div className="mt-3 flex gap-2">
-            <button
-              type="button"
-              onClick={saveEdit}
-              className="inline-flex items-center gap-1 rounded-[8px] bg-stone-900 px-3 py-2 text-sm font-bold text-white"
-            >
-              <Check size={15} />
-              저장
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setDraft(post.content);
-                setEditing(false);
-              }}
-              className="inline-flex items-center gap-1 rounded-[8px] bg-white/80 px-3 py-2 text-sm font-bold text-stone-700"
-            >
-              <X size={15} />
-              취소
-            </button>
-          </div>
-        </div>
-      ) : isWorksheetPost ? (
+      {isWorksheetPost ? (
         <div className="space-y-3">
-          {worksheetFields.map((field) => (
-            <section key={field.id} className="rounded-[8px] bg-white/45 px-3 py-2">
-              <h3 className="text-xs font-black text-stone-500">
-                {field.label}
-              </h3>
-              <p className="mt-1 whitespace-pre-wrap break-words text-[1.02rem] font-semibold leading-7 text-stone-900">
-                {post.templateAnswers?.[field.id] || '-'}
-              </p>
-            </section>
-          ))}
+          {worksheetFields
+            .filter((field) => String(post.templateAnswers?.[field.id] || '').trim())
+            .map((field) => (
+              <section key={field.id} className="rounded-[8px] bg-white/45 px-3 py-2">
+                <h3 className="text-xs font-black text-stone-500">
+                  {field.label}
+                </h3>
+                <p className="mt-1 whitespace-pre-wrap break-words text-[1.02rem] font-semibold leading-7 text-stone-900">
+                  {post.templateAnswers[field.id]}
+                </p>
+              </section>
+            ))}
         </div>
       ) : (
         <div>
@@ -199,13 +160,13 @@ export default function PostCard({
         {wall.showAuthorNames !== false ? (
           <span className="font-semibold">{post.authorName || '익명'}</span>
         ) : (
-          <span className="font-semibold text-stone-500">작성자 비공개</span>
+          <span className="font-semibold text-stone-500">{hiddenAuthorLabel}</span>
         )}
         <span>{dateText(post.createdAt)}</span>
       </footer>
 
       <div className="mt-4 flex flex-wrap gap-2 border-t border-stone-900/10 pt-3">
-        {wall.likesEnabled && (
+        {wall.likesEnabled && !readOnly && (
           <button
             type="button"
             onClick={handleLike}
@@ -216,6 +177,12 @@ export default function PostCard({
             <Heart size={15} fill={liked ? 'currentColor' : 'none'} />
             {likeCount}
           </button>
+        )}
+        {wall.likesEnabled && readOnly && (
+          <span className="inline-flex items-center gap-1 rounded-full bg-white/75 px-3 py-1.5 text-sm font-bold text-stone-700">
+            <Heart size={15} />
+            {likeCount}
+          </span>
         )}
         {wall.commentsEnabled && (
           <button
@@ -229,7 +196,12 @@ export default function PostCard({
         )}
       </div>
       {commentsOpen && (
-        <CommentBox postId={post.id} showAuthorNames={wall.showAuthorNames !== false} />
+        <CommentBox
+          postId={post.id}
+          showAuthorNames={wall.showAuthorNames !== false}
+          ownerId={wall.ownerId}
+          readOnly={readOnly}
+        />
       )}
     </article>
   );

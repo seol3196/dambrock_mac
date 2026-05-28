@@ -25,10 +25,10 @@ export function subscribeWalls(params, onValue) {
   return subscribe('/api/walls', params, onValue);
 }
 
-export function subscribeWall(wallId, onValue, onError) {
+export function subscribeWall(wallId, onValue, onError, params = {}) {
   return subscribe(
     `/api/walls/${wallId}`,
-    {},
+    params,
     onValue,
     {
       map: (data) => data.wall,
@@ -37,12 +37,12 @@ export function subscribeWall(wallId, onValue, onError) {
   );
 }
 
-export function subscribePosts(wallId, onValue, onError) {
-  return subscribe('/api/posts', { wallId }, onValue, { onError });
+export function subscribePosts(wallId, onValue, onError, params = {}) {
+  return subscribe('/api/posts', { wallId, ...params }, onValue, { onError });
 }
 
-export function subscribeComments(postId, onValue) {
-  return subscribe('/api/comments', { postId }, onValue);
+export function subscribeComments(postId, onValue, params = {}) {
+  return subscribe('/api/comments', { postId, ...params }, onValue);
 }
 
 export function createWall(data) {
