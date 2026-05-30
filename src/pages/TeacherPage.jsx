@@ -24,8 +24,10 @@ import {
   setStudentPasswords,
   subscribeUsers,
   subscribeWalls,
-  updateUser
+  updateUser,
+  updateWall
 } from '../lib/firestore';
+import { pickRandomQuote } from '../lib/quotes';
 import { dateText, paddedNumber, wallTone } from '../lib/ui';
 
 const RESET_PASSWORD = '123456';
@@ -54,6 +56,7 @@ export default function TeacherPage() {
     commentsEnabled: true,
     likesEnabled: true,
     showAuthorNames: true,
+    visibleToStudents: true,
     postMode: 'free',
     postTemplate: {
       fields: [
@@ -62,6 +65,7 @@ export default function TeacherPage() {
       ]
     }
   });
+  const quote = useMemo(() => pickRandomQuote(), []);
   const origin = typeof window === 'undefined' ? '' : window.location.origin;
 
   useEffect(() => {
@@ -235,6 +239,7 @@ export default function TeacherPage() {
       commentsEnabled: true,
       likesEnabled: true,
       showAuthorNames: true,
+      visibleToStudents: true,
       postMode: 'free',
       postTemplate: {
         fields: [
@@ -249,6 +254,7 @@ export default function TeacherPage() {
     <Layout
       badge="교사 모드"
       title={`${profile?.displayName || displayId} 선생님`}
+      subtitle={quote}
       userLabel={displayId}
       aside={aside}
     >
@@ -718,6 +724,7 @@ function StudentManager({
 
 function WallManager({ form, setForm, submit, walls, origin }) {
   const [questionEditorOpen, setQuestionEditorOpen] = useState(false);
+  const [copyMessage, setCopyMessage] = useState('');
   const sortedWalls = useMemo(
     () => [...walls].sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0)),
     [walls]
@@ -726,7 +733,26 @@ function WallManager({ form, setForm, submit, walls, origin }) {
   const previewFields = templateFields.slice(0, 3);
 
   async function copyWallLink(wallId) {
-    await navigator.clipboard.writeText(`${origin}/wall/${wallId}`);
+    const url = `${origin}/wall/${wallId}`;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url);
+      } else {
+        const textarea = document.createElement('textarea');
+        textarea.value = url;
+        textarea.setAttribute('readonly', '');
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
+      }
+      setCopyMessage('담벼락 링크를 복사했습니다.');
+      window.setTimeout(() => setCopyMessage(''), 1600);
+    } catch {
+      setCopyMessage('복사하지 못했습니다. 링크를 직접 열어 주소를 복사해 주세요.');
+    }
   }
 
   function setTemplateField(fieldId, patch) {
@@ -767,6 +793,12 @@ function WallManager({ form, setForm, submit, walls, origin }) {
       postTemplate: {
         fields: fields.filter((field) => field.id !== fieldId)
       }
+    });
+  }
+
+  async function toggleStudentDashboardVisibility(wall) {
+    await updateWall(wall.id, {
+      visibleToStudents: wall.visibleToStudents === false
     });
   }
 
@@ -989,7 +1021,14 @@ function WallManager({ form, setForm, submit, walls, origin }) {
       )}
 
       <section className="rounded-[8px] bg-white/90 p-5 shadow-soft">
-        <h2 className="text-xl font-bold">담벼락 목록</h2>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-xl font-bold">담벼락 목록</h2>
+          {copyMessage && (
+            <p className="rounded-[8px] bg-emerald-50 px-3 py-2 text-sm font-bold text-emerald-700">
+              {copyMessage}
+            </p>
+          )}
+        </div>
         <div className="mt-4 grid gap-3 md:grid-cols-2">
           {sortedWalls.map((wall) => (
             <article
@@ -1001,6 +1040,19 @@ function WallManager({ form, setForm, submit, walls, origin }) {
                 {wall.description || '설명이 아직 없습니다.'}
               </p>
               <p className="mt-3 text-xs text-stone-500">생성 시간 {dateText(wall.createdAt)}</p>
+              <label className="mt-3 flex items-center justify-between gap-3 rounded-[10px] bg-white/65 px-3 py-2">
+                <span>
+                  <b className="block text-sm text-stone-800">학생 대시보드에 표시</b>
+                  <span className="text-xs text-stone-500">
+                    끄면 학생 목록에서는 숨기고 링크 접속은 유지합니다.
+                  </span>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={wall.visibleToStudents !== false}
+                  onChange={() => toggleStudentDashboardVisibility(wall)}
+                />
+              </label>
               <div className="mt-3 flex flex-wrap gap-2">
                 <button
                   type="button"

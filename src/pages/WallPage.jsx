@@ -29,6 +29,8 @@ import {
   wallBackgroundOptions
 } from '../lib/firestore';
 
+const MAX_COLUMN_NAME_LENGTH = 10;
+
 function homePath(role) {
   if (role === 'teacher') return '/teacher';
   if (role === 'student') return '/student';
@@ -135,6 +137,7 @@ export default function WallPage() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [actionsOpen, setActionsOpen] = useState(false);
   const [editingPost, setEditingPost] = useState(null);
+  const [postTargetColumn, setPostTargetColumn] = useState(null);
   const [draggingPost, setDraggingPost] = useState(null);
   const [dragPreview, setDragPreview] = useState(null);
   const [columnNameDrafts, setColumnNameDrafts] = useState({});
@@ -163,6 +166,7 @@ export default function WallPage() {
     [effectiveShowAuthorNames, wall]
   );
   const canManageWall = Boolean(!readOnlyMode && user && role === 'teacher' && wall?.ownerId === user.uid);
+  const canMovePosts = Boolean(!readOnlyMode && user);
   const columnCount = clampColumnCount(wall?.columnCount ?? 4);
   const requestedColumn = Number(searchParams.get('column'));
   const columnNumbers = useMemo(
@@ -232,6 +236,7 @@ export default function WallPage() {
               commentsEnabled: nextWall.commentsEnabled ?? true,
               likesEnabled: nextWall.likesEnabled ?? true,
               showAuthorNames: nextWall.showAuthorNames ?? true,
+              visibleToStudents: nextWall.visibleToStudents ?? true,
               postMode: nextWall.postMode || 'free',
               postTemplate: nextWall.postTemplate || { fields: [] },
               backgroundTone: nextWall.backgroundTone || wallBackgroundOptions[0].value
@@ -336,6 +341,10 @@ export default function WallPage() {
       return;
     }
 
+    const targetColumn = columnNumbers.includes(postTargetColumn)
+      ? postTargetColumn
+      : sharedColumn;
+
     await createPost({
       wallId,
       authorId: user?.uid || 'anonymous',
@@ -343,18 +352,20 @@ export default function WallPage() {
       content: isWorksheetWall ? worksheetSummary(templateFields, templateAnswers) : form.content.trim(),
       templateAnswers: isWorksheetWall ? templateAnswers : undefined,
       color: form.color,
-      ...(sharedColumn
-        ? nextColumnPostPlacement(postsByColumn, sharedColumn)
+      ...(targetColumn
+        ? nextColumnPostPlacement(postsByColumn, targetColumn)
         : nextPostPlacement(postsByColumn, columnNumbers))
     });
 
     setForm({ content: '', color: colorOptions[0].value, templateAnswers: emptyWorksheetAnswers(templateFields) });
+    setPostTargetColumn(null);
     setModalOpen(false);
   }
 
-  function openCreatePostModal() {
+  function openCreatePostModal(column = null) {
     if (readOnlyMode) return;
     setEditingPost(null);
+    setPostTargetColumn(columnNumbers.includes(column) ? column : null);
     setForm({
       content: '',
       color: colorOptions[0].value,
@@ -366,6 +377,7 @@ export default function WallPage() {
   function openEditPostModal(post) {
     if (readOnlyMode) return;
     setEditingPost(post);
+    setPostTargetColumn(null);
     setForm({
       content: post.content || '',
       color: post.color || colorOptions[0].value,
@@ -390,6 +402,7 @@ export default function WallPage() {
         color: form.color
       });
       setEditingPost(null);
+      setPostTargetColumn(null);
       setForm({ content: '', color: colorOptions[0].value, templateAnswers: emptyWorksheetAnswers(templateFields) });
       setModalOpen(false);
       return;
@@ -411,6 +424,7 @@ export default function WallPage() {
       templateAnswers
     });
     setEditingPost(null);
+    setPostTargetColumn(null);
     setForm({ content: '', color: colorOptions[0].value, templateAnswers: emptyWorksheetAnswers(templateFields) });
     setModalOpen(false);
   }
@@ -468,7 +482,7 @@ export default function WallPage() {
   }
 
   async function saveColumnName(column) {
-    const nextName = (columnNameDrafts[column] || '').trim();
+    const nextName = (columnNameDrafts[column] || '').trim().slice(0, MAX_COLUMN_NAME_LENGTH);
     const currentName = columnName(wall, column);
     const nextColumnNames = { ...(wall?.columnNames || {}) };
 
@@ -503,6 +517,36 @@ export default function WallPage() {
 
   async function movePostToColumn(column, targetPostId = null, placement = 'after') {
     if (!draggingPost) return;
+
+    if (!canManageWall) {
+      if (!user || draggingPost.authorId !== user.uid) return;
+
+      const targetColumnPosts = (postsByColumn[column] || []).filter(
+        (post) => post.id !== draggingPost.id
+      );
+      const targetIndex = targetPostId
+        ? targetColumnPosts.findIndex((post) => post.id === targetPostId)
+        : -1;
+      const insertIndex =
+        targetIndex === -1 ? targetColumnPosts.length : targetIndex + (placement === 'after' ? 1 : 0);
+      const previousPost = targetColumnPosts[insertIndex - 1];
+      const nextPost = targetColumnPosts[insertIndex];
+      const previousOrder = previousPost ? postSortValue(previousPost, insertIndex - 1) : null;
+      const nextOrder = nextPost ? postSortValue(nextPost, insertIndex) : null;
+      const order =
+        previousOrder == null && nextOrder == null
+          ? 0
+          : previousOrder == null
+            ? nextOrder - 1
+            : nextOrder == null
+              ? previousOrder + 1
+              : (previousOrder + nextOrder) / 2;
+
+      await updatePost(draggingPost.id, { column, order });
+      setDraggingPost(null);
+      setDragPreview(null);
+      return;
+    }
 
     const nextByColumn = Object.fromEntries(
       columnNumbers.map((columnNumber) => [
@@ -613,6 +657,11 @@ export default function WallPage() {
             <p className="mt-1 text-sm text-stone-600">
               {wall?.ownerName} 선생님 · 게시글 {posts.length}개
             </p>
+            {canManageWall && wall?.showAuthorNames === false && (
+              <p className="mt-2 inline-flex rounded-full bg-amber-100 px-3 py-1 text-xs font-bold text-amber-800">
+                학생에겐 작성자 이름이 표시되지 않습니다.
+              </p>
+            )}
           </div>
 
           {canManageWall && (
@@ -713,16 +762,16 @@ export default function WallPage() {
                 key={column}
                 data-testid={`wall-column-${column}`}
                 onDragOver={(event) => {
-                  if (!canManageWall || !draggingPost) return;
+                  if (!canMovePosts || !draggingPost) return;
                   event.preventDefault();
                   showColumnDropPreview(column);
                 }}
                 onDrop={(event) => {
                   event.preventDefault();
-                  if (canManageWall) movePostToColumn(column);
+                  if (canMovePosts) movePostToColumn(column);
                 }}
                 className={`min-h-[300px] rounded-[16px] p-3 transition ${
-                  draggingPost && canManageWall
+                  draggingPost && canMovePosts
                     ? 'bg-white/22 outline outline-2 outline-offset-2 outline-dashed outline-stone-400'
                     : ''
                 }`}
@@ -730,15 +779,12 @@ export default function WallPage() {
                 <div className="mb-4 px-1">
                   {canManageWall ? (
                     <div className="flex min-h-12 items-center gap-2 rounded-[10px] border border-white/75 bg-white/68 px-3 py-2 shadow-sm backdrop-blur-[2px]">
-                      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-amber-100 text-sm font-black text-stone-800 shadow-inner">
-                        {column}
-                      </span>
                       <input
                         value={columnNameDrafts[column] ?? columnName(wall, column)}
                         onChange={(event) =>
                           setColumnNameDrafts((drafts) => ({
                             ...drafts,
-                            [column]: event.target.value
+                            [column]: event.target.value.slice(0, MAX_COLUMN_NAME_LENGTH)
                           }))
                         }
                         onBlur={() => saveColumnName(column)}
@@ -748,9 +794,9 @@ export default function WallPage() {
                             event.currentTarget.blur();
                           }
                         }}
-                        maxLength={24}
-                        placeholder={`${column}번 컬럼`}
-                        className="min-w-0 flex-1 bg-transparent text-base font-extrabold text-stone-900 outline-none placeholder:text-stone-500"
+                        maxLength={MAX_COLUMN_NAME_LENGTH}
+                        placeholder="컬럼명을 입력한 후 엔터"
+                        className="min-w-0 flex-1 bg-transparent text-center text-xl font-extrabold text-stone-900 outline-none placeholder:text-sm placeholder:font-bold placeholder:text-stone-500 sm:text-2xl"
                       />
                       <button
                         type="button"
@@ -763,12 +809,19 @@ export default function WallPage() {
                     </div>
                   ) : columnName(wall, column) ? (
                     <h2 className="flex min-h-12 items-center gap-2 rounded-[10px] border border-white/75 bg-white/68 px-3 py-2 text-stone-900 shadow-sm backdrop-blur-[2px]">
-                      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-amber-100 text-sm font-black text-stone-800 shadow-inner">
-                        {column}
-                      </span>
-                      <span className="min-w-0 flex-1 truncate text-base font-extrabold">
+                      <span className="min-w-0 flex-1 truncate text-center text-xl font-extrabold sm:text-2xl">
                         {columnTitle(wall, column)}
                       </span>
+                      {!readOnlyMode && (
+                        <button
+                          type="button"
+                          onClick={() => openCreatePostModal(column)}
+                          aria-label={`${columnTitle(wall, column)}에 포스트잇 추가`}
+                          className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-stone-900 text-white shadow-sm transition hover:bg-stone-700"
+                        >
+                          <Plus size={18} />
+                        </button>
+                      )}
                     </h2>
                   ) : (
                     <div className="min-h-12" />
@@ -781,6 +834,10 @@ export default function WallPage() {
                       post={post}
                       wall={displayWall || {}}
                       isTeacherView={canManageWall}
+                      canDragPost={Boolean(
+                        canMovePosts &&
+                          (canManageWall || (user && post.authorId === user.uid))
+                      )}
                       readOnly={readOnlyMode}
                       onDragStart={setDraggingPost}
                       onEditPost={openEditPostModal}
@@ -829,8 +886,8 @@ export default function WallPage() {
       )}
 
       {settingsOpen && canManageWall && settingsForm && (
-        <div className="fixed inset-0 z-30 grid place-items-center bg-stone-950/45 px-4">
-          <section className="w-full max-w-lg overflow-hidden rounded-[18px] bg-white p-5 shadow-soft">
+        <div className="fixed inset-0 z-30 overflow-y-auto bg-stone-950/45 px-4 py-6">
+          <section className="mx-auto max-h-[calc(100vh-3rem)] w-full max-w-lg overflow-y-auto rounded-[18px] bg-white p-5 shadow-soft">
             <div className="flex items-center justify-between">
               <h2 className="text-2xl font-bold text-stone-950">담벼락 설정</h2>
               <button
@@ -890,6 +947,21 @@ export default function WallPage() {
                   checked={settingsForm.likesEnabled}
                   onChange={(e) =>
                     setSettingsForm({ ...settingsForm, likesEnabled: e.target.checked })
+                  }
+                />
+              </label>
+              <label className="flex items-center justify-between rounded-[10px] border border-stone-200 px-4 py-3">
+                <span>
+                  <b className="block text-sm text-stone-800">학생 대시보드에 표시</b>
+                  <span className="text-xs text-stone-500">
+                    끄면 학생 목록에서는 숨기고 링크 접속은 유지합니다.
+                  </span>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={settingsForm.visibleToStudents}
+                  onChange={(e) =>
+                    setSettingsForm({ ...settingsForm, visibleToStudents: e.target.checked })
                   }
                 />
               </label>

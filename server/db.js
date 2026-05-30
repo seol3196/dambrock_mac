@@ -54,6 +54,7 @@ export function toWall(row) {
     commentsEnabled: Boolean(row.comments_enabled),
     likesEnabled: Boolean(row.likes_enabled),
     showAuthorNames: row.show_author_names == null ? true : Boolean(row.show_author_names),
+    visibleToStudents: row.visible_to_students == null ? true : Boolean(row.visible_to_students),
     postMode: row.post_mode || 'free',
     postTemplate: json(row.post_template, { fields: [] }),
     ownerId: row.owner_id,
@@ -126,6 +127,7 @@ export function initDb() {
       comments_enabled INTEGER NOT NULL DEFAULT 1,
       likes_enabled INTEGER NOT NULL DEFAULT 1,
       show_author_names INTEGER NOT NULL DEFAULT 1,
+      visible_to_students INTEGER NOT NULL DEFAULT 1,
       post_mode TEXT NOT NULL DEFAULT 'free',
       post_template TEXT NOT NULL DEFAULT '{"fields":[]}',
       owner_id TEXT NOT NULL REFERENCES users(uid) ON DELETE CASCADE,
@@ -178,6 +180,9 @@ export function initDb() {
   }
   if (!wallColumns.some((column) => column.name === 'post_template')) {
     db.prepare('ALTER TABLE walls ADD COLUMN post_template TEXT NOT NULL DEFAULT \'{"fields":[]}\'').run();
+  }
+  if (!wallColumns.some((column) => column.name === 'visible_to_students')) {
+    db.prepare('ALTER TABLE walls ADD COLUMN visible_to_students INTEGER NOT NULL DEFAULT 1').run();
   }
 
   const postColumns = db.prepare('PRAGMA table_info(posts)').all();

@@ -1,7 +1,7 @@
 import { LogOut } from 'lucide-react';
 import { logout } from '../lib/auth';
 
-export default function Layout({ badge, title, userLabel, children, aside }) {
+export default function Layout({ badge, title, subtitle, userLabel, children, aside }) {
   const hasAside = Boolean(aside);
 
   return (
@@ -11,6 +11,11 @@ export default function Layout({ badge, title, userLabel, children, aside }) {
           <div className="min-w-0">
             <p className="text-sm font-bold text-amber-700">{badge}</p>
             <h1 className="truncate text-2xl font-bold text-stone-950 sm:text-4xl">{title}</h1>
+            {subtitle && (
+              <p className="mt-1.5 line-clamp-2 text-base font-medium text-stone-600 sm:text-lg">
+                {subtitle}
+              </p>
+            )}
           </div>
           <div className="flex items-center gap-3">
             {userLabel && (

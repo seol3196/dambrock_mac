@@ -4,7 +4,13 @@ import { useAuth } from '../contexts/AuthContext.jsx';
 import { createComment, deleteComment, subscribeComments } from '../lib/firestore';
 import { dateText } from '../lib/ui';
 
-export default function CommentBox({ postId, showAuthorNames = true, ownerId, readOnly = false }) {
+export default function CommentBox({
+  postId,
+  showAuthorNames = true,
+  ownerId,
+  revealHiddenAuthorNames = false,
+  readOnly = false
+}) {
   const { user, profile } = useAuth();
   const [comments, setComments] = useState([]);
   const [text, setText] = useState('');
@@ -36,9 +42,11 @@ export default function CommentBox({ postId, showAuthorNames = true, ownerId, re
           <div key={comment.id} className="flex items-start justify-between gap-2 text-sm">
             <p className="min-w-0 flex-1 overflow-hidden break-words [overflow-wrap:anywhere]">
               <b>
-                {showAuthorNames
+                {showAuthorNames || revealHiddenAuthorNames
                   ? comment.authorName
-                  : `비공개(${comment.authorId === ownerId ? '교사' : '학생'})`}{' '}
+                  : comment.authorId === ownerId
+                    ? '선생님'
+                    : '비공개'}{' '}
               </b>
               {comment.text}
               <span className="ml-2 text-xs text-stone-500">{dateText(comment.createdAt)}</span>

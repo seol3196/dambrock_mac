@@ -4,11 +4,14 @@ import { Link } from 'react-router-dom';
 import Layout from '../components/Layout.jsx';
 import { useAuth } from '../contexts/AuthContext.jsx';
 import { subscribeWalls } from '../lib/firestore';
+import { pickRandomQuote } from '../lib/quotes';
 import { wallTone } from '../lib/ui';
 
 export default function StudentPage() {
   const { profile, displayId } = useAuth();
   const [walls, setWalls] = useState([]);
+  const studentName = profile?.displayName || displayId;
+  const quote = useMemo(() => pickRandomQuote(), []);
 
   useEffect(() => {
     if (!profile?.teacherId) return undefined;
@@ -17,14 +20,19 @@ export default function StudentPage() {
 
   const sortedWalls = useMemo(
     () =>
-      [...walls].sort(
-        (a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0)
-      ),
+      [...walls]
+        .filter((wall) => wall.visibleToStudents !== false)
+        .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0)),
     [walls]
   );
 
   return (
-    <Layout badge="학생 모드" title={`안녕, ${displayId}!`} userLabel={displayId}>
+    <Layout
+      badge="학생 모드"
+      title={`안녕, ${studentName}!`}
+      subtitle={quote}
+      userLabel={studentName}
+    >
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1.15fr)_420px]">
         <section className="rounded-[18px] border border-white/60 bg-white/92 p-6 shadow-soft">
           <div className="flex flex-wrap items-end justify-between gap-4">

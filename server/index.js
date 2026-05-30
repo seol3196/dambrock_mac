@@ -268,8 +268,8 @@ app.post('/api/walls', requireUser, requireRole('teacher'), (req, res) => {
   db.prepare(
     `INSERT INTO walls
      (id, title, description, access_mode, comments_enabled, likes_enabled, owner_id, owner_name,
-      show_author_names, post_mode, post_template, background_tone, column_count, column_names, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      show_author_names, visible_to_students, post_mode, post_template, background_tone, column_count, column_names, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     wallId,
     String(req.body.title || '').trim(),
@@ -280,6 +280,7 @@ app.post('/api/walls', requireUser, requireRole('teacher'), (req, res) => {
     req.user.uid,
     String(req.body.ownerName || req.user.display_name || req.user.login_id),
     req.body.showAuthorNames === false ? 0 : 1,
+    req.body.visibleToStudents === false ? 0 : 1,
     postMode,
     JSON.stringify(postTemplate),
     req.body.backgroundTone || 'bg-[#fff8e8]',
@@ -316,6 +317,7 @@ app.patch('/api/walls/:id', requireUser, requireRole('teacher'), (req, res) => {
       comments_enabled = COALESCE(?, comments_enabled),
       likes_enabled = COALESCE(?, likes_enabled),
       show_author_names = COALESCE(?, show_author_names),
+      visible_to_students = COALESCE(?, visible_to_students),
       post_mode = COALESCE(?, post_mode),
       post_template = COALESCE(?, post_template),
       background_tone = COALESCE(?, background_tone),
@@ -330,6 +332,7 @@ app.patch('/api/walls/:id', requireUser, requireRole('teacher'), (req, res) => {
     req.body.commentsEnabled == null ? null : req.body.commentsEnabled ? 1 : 0,
     req.body.likesEnabled == null ? null : req.body.likesEnabled ? 1 : 0,
     req.body.showAuthorNames == null ? null : req.body.showAuthorNames ? 1 : 0,
+    req.body.visibleToStudents == null ? null : req.body.visibleToStudents ? 1 : 0,
     nextPostMode,
     nextPostTemplate,
     req.body.backgroundTone == null ? null : req.body.backgroundTone,

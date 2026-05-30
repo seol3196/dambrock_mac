@@ -16,6 +16,7 @@ export default function PostCard({
   post,
   wall,
   isTeacherView = false,
+  canDragPost = false,
   readOnly = false,
   dropPreview,
   onDragStart,
@@ -26,6 +27,7 @@ export default function PostCard({
 }) {
   const { user, role } = useAuth();
   const [commentsOpen, setCommentsOpen] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const liked = Boolean(user && post.likedBy?.[user.uid]);
   const likeCount = post.likeCount || Object.keys(post.likedBy || {}).length;
   const canDelete =
@@ -37,10 +39,21 @@ export default function PostCard({
       user &&
       (post.authorId === user.uid || (role === 'teacher' && wall.ownerId === user.uid))
   );
-  const canDrag = Boolean(!readOnly && isTeacherView && role === 'teacher' && wall.ownerId === user.uid);
+  const canDrag = Boolean(
+    !readOnly &&
+      (canDragPost || (isTeacherView && role === 'teacher' && wall.ownerId === user.uid))
+  );
   const isWorksheetPost = wall.postMode === 'worksheet';
   const worksheetFields = Array.isArray(wall.postTemplate?.fields) ? wall.postTemplate.fields : [];
-  const hiddenAuthorLabel = `비공개(${post.authorId === wall.ownerId ? '교사' : '학생'})`;
+  const canSeeHiddenAuthorNames = Boolean(
+    !readOnly && role === 'teacher' && user?.uid === wall.ownerId
+  );
+  const authorLabel =
+    wall.showAuthorNames !== false || canSeeHiddenAuthorNames
+      ? post.authorName || '익명'
+      : post.authorId === wall.ownerId
+        ? '선생님'
+        : '비공개';
 
   async function handleLike() {
     if (!user) {
@@ -109,7 +122,7 @@ export default function PostCard({
             <button
               type="button"
               aria-label="게시글 삭제"
-              onClick={() => deletePost(post.id)}
+              onClick={() => setDeleteConfirmOpen(true)}
               className="rounded-full bg-white/75 p-1.5 text-stone-500 hover:text-red-600"
             >
               <Trash2 size={15} />
@@ -157,11 +170,9 @@ export default function PostCard({
       )}
 
       <footer className="mt-5 flex items-center justify-between gap-3 text-sm text-stone-700">
-        {wall.showAuthorNames !== false ? (
-          <span className="font-semibold">{post.authorName || '익명'}</span>
-        ) : (
-          <span className="font-semibold text-stone-500">{hiddenAuthorLabel}</span>
-        )}
+        <span className={`font-semibold ${wall.showAuthorNames === false && !canSeeHiddenAuthorNames ? 'text-stone-500' : ''}`}>
+          {authorLabel}
+        </span>
         <span>{dateText(post.createdAt)}</span>
       </footer>
 
@@ -200,8 +211,38 @@ export default function PostCard({
           postId={post.id}
           showAuthorNames={wall.showAuthorNames !== false}
           ownerId={wall.ownerId}
+          revealHiddenAuthorNames={canSeeHiddenAuthorNames}
           readOnly={readOnly}
         />
+      )}
+      {deleteConfirmOpen && (
+        <div className="fixed inset-0 z-40 grid place-items-center bg-stone-950/45 px-4">
+          <section className="w-full max-w-sm rounded-[16px] bg-white p-5 text-stone-900 shadow-soft">
+            <h2 className="text-lg font-bold">정말로 삭제하시겠습니까?</h2>
+            <p className="mt-2 text-sm leading-6 text-stone-600">
+              삭제한 포스트잇은 되돌릴 수 없습니다.
+            </p>
+            <div className="mt-5 flex gap-2">
+              <button
+                type="button"
+                onClick={async () => {
+                  await deletePost(post.id);
+                  setDeleteConfirmOpen(false);
+                }}
+                className="flex-1 rounded-[10px] bg-red-500 px-4 py-3 text-sm font-bold text-white hover:bg-red-600"
+              >
+                예
+              </button>
+              <button
+                type="button"
+                onClick={() => setDeleteConfirmOpen(false)}
+                className="flex-1 rounded-[10px] border border-stone-300 px-4 py-3 text-sm font-bold text-stone-700 hover:bg-stone-50"
+              >
+                아니오
+              </button>
+            </div>
+          </section>
+        </div>
       )}
     </article>
   );
