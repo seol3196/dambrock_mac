@@ -55,11 +55,13 @@ export function toWall(row) {
     likesEnabled: Boolean(row.likes_enabled),
     showAuthorNames: row.show_author_names == null ? true : Boolean(row.show_author_names),
     visibleToStudents: row.visible_to_students == null ? true : Boolean(row.visible_to_students),
+    publicViewEnabled: row.public_view_enabled == null ? false : Boolean(row.public_view_enabled),
     postMode: row.post_mode || 'free',
     postTemplate: json(row.post_template, { fields: [] }),
     ownerId: row.owner_id,
     ownerName: row.owner_name,
     backgroundTone: row.background_tone,
+    columnModeEnabled: row.column_mode_enabled == null ? false : Boolean(row.column_mode_enabled),
     columnCount: row.column_count,
     columnNames: json(row.column_names, {}),
     createdAt: row.created_at,
@@ -128,11 +130,13 @@ export function initDb() {
       likes_enabled INTEGER NOT NULL DEFAULT 1,
       show_author_names INTEGER NOT NULL DEFAULT 1,
       visible_to_students INTEGER NOT NULL DEFAULT 1,
+      public_view_enabled INTEGER NOT NULL DEFAULT 0,
       post_mode TEXT NOT NULL DEFAULT 'free',
       post_template TEXT NOT NULL DEFAULT '{"fields":[]}',
       owner_id TEXT NOT NULL REFERENCES users(uid) ON DELETE CASCADE,
       owner_name TEXT NOT NULL,
       background_tone TEXT NOT NULL,
+      column_mode_enabled INTEGER NOT NULL DEFAULT 0,
       column_count INTEGER NOT NULL DEFAULT 4,
       column_names TEXT NOT NULL DEFAULT '{}',
       created_at TEXT NOT NULL,
@@ -183,6 +187,12 @@ export function initDb() {
   }
   if (!wallColumns.some((column) => column.name === 'visible_to_students')) {
     db.prepare('ALTER TABLE walls ADD COLUMN visible_to_students INTEGER NOT NULL DEFAULT 1').run();
+  }
+  if (!wallColumns.some((column) => column.name === 'column_mode_enabled')) {
+    db.prepare('ALTER TABLE walls ADD COLUMN column_mode_enabled INTEGER NOT NULL DEFAULT 0').run();
+  }
+  if (!wallColumns.some((column) => column.name === 'public_view_enabled')) {
+    db.prepare('ALTER TABLE walls ADD COLUMN public_view_enabled INTEGER NOT NULL DEFAULT 0').run();
   }
 
   const postColumns = db.prepare('PRAGMA table_info(posts)').all();

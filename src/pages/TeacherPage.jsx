@@ -11,7 +11,7 @@ import {
   X
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import Field from '../components/Field.jsx';
 import Layout from '../components/Layout.jsx';
 import { useAuth } from '../contexts/AuthContext.jsx';
@@ -57,6 +57,8 @@ export default function TeacherPage() {
     likesEnabled: true,
     showAuthorNames: true,
     visibleToStudents: true,
+    publicViewEnabled: false,
+    columnModeEnabled: false,
     postMode: 'free',
     postTemplate: {
       fields: [
@@ -120,22 +122,22 @@ export default function TeacherPage() {
 
     if (password.length < 6) {
       alert('학생 비밀번호는 6자 이상이어야 합니다.');
-      return;
+      return false;
     }
 
     if (!prefix) {
       alert('학생 ID 접두어를 입력해 주세요.');
-      return;
+      return false;
     }
 
     if (!Number.isInteger(start) || start < 0) {
       alert('시작 번호를 다시 확인해 주세요.');
-      return;
+      return false;
     }
 
     if (!names.length && (!Number.isInteger(end) || end < 0 || start > end)) {
       alert('시작 번호와 끝 번호를 다시 확인해 주세요.');
-      return;
+      return false;
     }
 
     const lastNumber = names.length ? start + names.length - 1 : end;
@@ -175,12 +177,14 @@ export default function TeacherPage() {
         ...prev,
         nameList: names.length ? '' : prev.nameList
       }));
+      return true;
     } catch (error) {
       const message =
         error?.code === 'auth/email-already-in-use'
           ? '이미 존재하는 학생 ID가 포함되어 있습니다.'
           : error?.message || '학생 계정 생성 중 오류가 발생했습니다.';
       alert(message);
+      return false;
     }
   }
 
@@ -193,15 +197,15 @@ export default function TeacherPage() {
 
     if (!id) {
       alert('학생 ID를 입력해 주세요.');
-      return;
+      return false;
     }
     if (!displayName) {
       alert('학생 이름을 입력해 주세요.');
-      return;
+      return false;
     }
     if (password.length < 6) {
       alert('학생 비밀번호는 6자 이상이어야 합니다.');
-      return;
+      return false;
     }
 
     try {
@@ -216,18 +220,20 @@ export default function TeacherPage() {
         displayName: '',
         password: RESET_PASSWORD
       });
+      return true;
     } catch (error) {
       const message =
         error?.code === 'auth/email-already-in-use'
           ? '이미 존재하는 학생 ID입니다.'
           : error?.message || '학생 계정 생성 중 오류가 발생했습니다.';
       alert(message);
+      return false;
     }
   }
 
   async function submitWall(event) {
     event.preventDefault();
-    await createWall({
+    const data = await createWall({
       ...wallForm,
       ownerId: user.uid,
       ownerName: profile?.displayName || displayId
@@ -240,6 +246,8 @@ export default function TeacherPage() {
       likesEnabled: true,
       showAuthorNames: true,
       visibleToStudents: true,
+      publicViewEnabled: false,
+      columnModeEnabled: false,
       postMode: 'free',
       postTemplate: {
         fields: [
@@ -248,6 +256,7 @@ export default function TeacherPage() {
         ]
       }
     });
+    return data;
   }
 
   return (
@@ -296,6 +305,7 @@ function StudentManager({
   const [passwordDraft, setPasswordDraft] = useState('');
   const [selectedUids, setSelectedUids] = useState([]);
   const [batchPassword, setBatchPassword] = useState('');
+  const [studentCreateMode, setStudentCreateMode] = useState(null);
 
   const sorted = useMemo(
     () =>
@@ -428,118 +438,7 @@ function StudentManager({
   }
 
   return (
-    <div className="grid gap-5 xl:grid-cols-[380px_1fr]">
-      <div className="space-y-5">
-        <form onSubmit={submitSingle} className="rounded-[8px] bg-white/90 p-5 shadow-soft">
-          <h2 className="text-xl font-bold">학생 한 명 생성</h2>
-          <div className="mt-5 space-y-4">
-            <Field label="학생 ID">
-              <input
-                value={singleForm.id}
-                onChange={(e) => setSingleForm({ ...singleForm, id: e.target.value })}
-                className="h-11 w-full rounded-[8px] border border-stone-200 px-3"
-                placeholder="mh01"
-              />
-            </Field>
-            <Field label="학생 이름">
-              <input
-                value={singleForm.displayName}
-                onChange={(e) =>
-                  setSingleForm({ ...singleForm, displayName: e.target.value })
-                }
-                className="h-11 w-full rounded-[8px] border border-stone-200 px-3"
-                placeholder="홍길동"
-              />
-            </Field>
-            <Field label="비밀번호">
-              <input
-                type="password"
-                minLength={6}
-                autoComplete="new-password"
-                value={singleForm.password}
-                onChange={(e) =>
-                  setSingleForm({ ...singleForm, password: e.target.value })
-                }
-                className="h-11 w-full rounded-[8px] border border-stone-200 px-3"
-              />
-            </Field>
-          </div>
-          <button
-            type="submit"
-            className="mt-5 h-11 w-full rounded-[8px] bg-stone-900 font-bold text-white"
-          >
-            학생 한 명 생성
-          </button>
-        </form>
-
-        <form onSubmit={submit} className="rounded-[8px] bg-white/90 p-5 shadow-soft">
-          <h2 className="text-xl font-bold">학생 일괄 생성</h2>
-          <div className="mt-5 grid grid-cols-2 gap-4">
-            <Field label="ID 접두어">
-              <input
-                value={form.prefix}
-                onChange={(e) => setForm({ ...form, prefix: e.target.value })}
-                className="h-11 w-full rounded-[8px] border border-stone-200 px-3"
-                placeholder="class_"
-              />
-            </Field>
-            <Field label="비밀번호">
-              <input
-                type="password"
-                minLength={6}
-                autoComplete="new-password"
-                value={form.password}
-                onChange={(e) => setForm({ ...form, password: e.target.value })}
-                className="h-11 w-full rounded-[8px] border border-stone-200 px-3"
-              />
-            </Field>
-            <Field label="시작 번호">
-              <input
-                inputMode="numeric"
-                value={form.start}
-                onChange={(e) =>
-                  setForm({ ...form, start: e.target.value.replace(/\D/g, '') || '00' })
-                }
-                className="h-11 w-full rounded-[8px] border border-stone-200 px-3"
-              />
-            </Field>
-            <Field label="끝 번호">
-              <input
-                inputMode="numeric"
-                value={form.end}
-                onChange={(e) =>
-                  setForm({ ...form, end: e.target.value.replace(/\D/g, '') || '00' })
-                }
-                className="h-11 w-full rounded-[8px] border border-stone-200 px-3"
-              />
-            </Field>
-          </div>
-          <div className="mt-4">
-            <Field label="학생 이름 목록">
-              <textarea
-                value={form.nameList}
-                onChange={(e) => setForm({ ...form, nameList: e.target.value })}
-                className="min-h-40 w-full rounded-[8px] border border-stone-200 p-3"
-                placeholder={'김학생\n이학생\n박학생'}
-              />
-            </Field>
-          </div>
-          <p className="mt-3 text-sm text-stone-500">
-            시작 번호를 `01`처럼 두 자리로 적으면 생성되는 ID도 같은 자리수로 맞춰집니다.
-          </p>
-          <p className="mt-2 text-sm text-stone-500">
-            엑셀에서 이름 열만 세로로 붙여넣으면 줄 수만큼 생성되고, 이름 목록이 있으면 번호 범위보다
-            이름 목록이 우선 적용됩니다.
-          </p>
-          <button
-            type="submit"
-            className="mt-5 h-11 w-full rounded-[8px] bg-stone-900 font-bold text-white"
-          >
-            학생 계정 생성
-          </button>
-        </form>
-      </div>
-
+    <div className="space-y-5">
       <section className="rounded-[8px] bg-white/90 p-5 shadow-soft">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>
@@ -548,14 +447,32 @@ function StudentManager({
               이름 수정, 개별 비밀번호 변경, 선택 학생 비밀번호 일괄 변경, 선택 학생 삭제를 여기서 처리합니다.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => window.print()}
-            className="inline-flex items-center gap-2 self-start rounded-[8px] border border-stone-300 px-3 py-2 text-sm font-bold"
-          >
-            <Printer size={16} />
-            인쇄
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => setStudentCreateMode('single')}
+              className="inline-flex items-center gap-2 rounded-[8px] bg-stone-900 px-3 py-2 text-sm font-bold text-white"
+            >
+              <Plus size={16} />
+              학생 한 명 생성
+            </button>
+            <button
+              type="button"
+              onClick={() => setStudentCreateMode('batch')}
+              className="inline-flex items-center gap-2 rounded-[8px] border border-stone-300 bg-white px-3 py-2 text-sm font-bold text-stone-700"
+            >
+              <Plus size={16} />
+              학생 일괄 생성
+            </button>
+            <button
+              type="button"
+              onClick={() => window.print()}
+              className="inline-flex items-center gap-2 rounded-[8px] border border-stone-300 px-3 py-2 text-sm font-bold"
+            >
+              <Printer size={16} />
+              인쇄
+            </button>
+          </div>
         </div>
 
         <div className="mt-5 rounded-[8px] border border-stone-200 bg-stone-50 p-4">
@@ -718,12 +635,163 @@ function StudentManager({
           )}
         </div>
       </section>
+
+      {studentCreateMode === 'single' && (
+        <div className="fixed inset-0 z-30 grid place-items-center bg-stone-950/45 px-4">
+          <form
+            onSubmit={async (event) => {
+              const created = await submitSingle(event);
+              if (created) setStudentCreateMode(null);
+            }}
+            className="w-full max-w-md rounded-[18px] bg-white p-5 shadow-soft"
+          >
+            <div className="flex items-center justify-between">
+              <h2 className="text-xl font-bold text-stone-950">학생 한 명 생성</h2>
+              <button
+                type="button"
+                onClick={() => setStudentCreateMode(null)}
+                className="rounded-full p-2 hover:bg-stone-100"
+                aria-label="학생 생성 닫기"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="mt-5 space-y-4">
+              <Field label="학생 ID">
+                <input
+                  value={singleForm.id}
+                  onChange={(e) => setSingleForm({ ...singleForm, id: e.target.value })}
+                  className="h-11 w-full rounded-[8px] border border-stone-200 px-3"
+                  placeholder="mh01"
+                />
+              </Field>
+              <Field label="학생 이름">
+                <input
+                  value={singleForm.displayName}
+                  onChange={(e) =>
+                    setSingleForm({ ...singleForm, displayName: e.target.value })
+                  }
+                  className="h-11 w-full rounded-[8px] border border-stone-200 px-3"
+                  placeholder="홍길동"
+                />
+              </Field>
+              <Field label="비밀번호">
+                <input
+                  type="password"
+                  minLength={6}
+                  autoComplete="new-password"
+                  value={singleForm.password}
+                  onChange={(e) =>
+                    setSingleForm({ ...singleForm, password: e.target.value })
+                  }
+                  className="h-11 w-full rounded-[8px] border border-stone-200 px-3"
+                />
+              </Field>
+            </div>
+            <button
+              type="submit"
+              className="mt-5 h-11 w-full rounded-[8px] bg-stone-900 font-bold text-white"
+            >
+              학생 한 명 생성
+            </button>
+          </form>
+        </div>
+      )}
+
+      {studentCreateMode === 'batch' && (
+        <div className="fixed inset-0 z-30 overflow-y-auto bg-stone-950/45 px-4 py-6">
+          <form
+            onSubmit={async (event) => {
+              const created = await submit(event);
+              if (created) setStudentCreateMode(null);
+            }}
+            className="mx-auto w-full max-w-xl rounded-[18px] bg-white p-5 shadow-soft"
+          >
+            <div className="flex items-center justify-between">
+              <h2 className="text-xl font-bold text-stone-950">학생 일괄 생성</h2>
+              <button
+                type="button"
+                onClick={() => setStudentCreateMode(null)}
+                className="rounded-full p-2 hover:bg-stone-100"
+                aria-label="학생 일괄 생성 닫기"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="mt-5 grid grid-cols-2 gap-4">
+              <Field label="ID 접두어">
+                <input
+                  value={form.prefix}
+                  onChange={(e) => setForm({ ...form, prefix: e.target.value })}
+                  className="h-11 w-full rounded-[8px] border border-stone-200 px-3"
+                  placeholder="class_"
+                />
+              </Field>
+              <Field label="비밀번호">
+                <input
+                  type="password"
+                  minLength={6}
+                  autoComplete="new-password"
+                  value={form.password}
+                  onChange={(e) => setForm({ ...form, password: e.target.value })}
+                  className="h-11 w-full rounded-[8px] border border-stone-200 px-3"
+                />
+              </Field>
+              <Field label="시작 번호">
+                <input
+                  inputMode="numeric"
+                  value={form.start}
+                  onChange={(e) =>
+                    setForm({ ...form, start: e.target.value.replace(/\D/g, '') || '00' })
+                  }
+                  className="h-11 w-full rounded-[8px] border border-stone-200 px-3"
+                />
+              </Field>
+              <Field label="끝 번호">
+                <input
+                  inputMode="numeric"
+                  value={form.end}
+                  onChange={(e) =>
+                    setForm({ ...form, end: e.target.value.replace(/\D/g, '') || '00' })
+                  }
+                  className="h-11 w-full rounded-[8px] border border-stone-200 px-3"
+                />
+              </Field>
+            </div>
+            <div className="mt-4">
+              <Field label="학생 이름 목록">
+                <textarea
+                  value={form.nameList}
+                  onChange={(e) => setForm({ ...form, nameList: e.target.value })}
+                  className="min-h-40 w-full rounded-[8px] border border-stone-200 p-3"
+                  placeholder={'김학생\n이학생\n박학생'}
+                />
+              </Field>
+            </div>
+            <p className="mt-3 text-sm text-stone-500">
+              시작 번호를 `01`처럼 두 자리로 적으면 생성되는 ID도 같은 자리수로 맞춰집니다.
+            </p>
+            <p className="mt-2 text-sm text-stone-500">
+              엑셀에서 이름 열만 세로로 붙여넣으면 줄 수만큼 생성되고, 이름 목록이 있으면 번호 범위보다
+              이름 목록이 우선 적용됩니다.
+            </p>
+            <button
+              type="submit"
+              className="mt-5 h-11 w-full rounded-[8px] bg-stone-900 font-bold text-white"
+            >
+              학생 일괄 생성
+            </button>
+          </form>
+        </div>
+      )}
     </div>
   );
 }
 
 function WallManager({ form, setForm, submit, walls, origin }) {
+  const navigate = useNavigate();
   const [questionEditorOpen, setQuestionEditorOpen] = useState(false);
+  const [wallCreateOpen, setWallCreateOpen] = useState(false);
   const [copyMessage, setCopyMessage] = useState('');
   const sortedWalls = useMemo(
     () => [...walls].sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0)),
@@ -803,9 +871,29 @@ function WallManager({ form, setForm, submit, walls, origin }) {
   }
 
   return (
-    <div className="grid gap-5 xl:grid-cols-[380px_1fr]">
-      <form onSubmit={submit} className="rounded-[8px] bg-white/90 p-5 shadow-soft">
-        <h2 className="text-xl font-bold">담벼락 만들기</h2>
+    <div className="space-y-5">
+      {wallCreateOpen && (
+        <div className="fixed inset-0 z-30 overflow-y-auto bg-stone-950/45 px-4 py-6">
+          <form
+            onSubmit={async (event) => {
+              const data = await submit(event);
+              if (!data?.wall?.id) return;
+              setWallCreateOpen(false);
+              navigate(`/wall/${data.wall.id}`);
+            }}
+            className="mx-auto w-full max-w-xl rounded-[18px] bg-white p-5 shadow-soft"
+          >
+            <div className="flex items-center justify-between">
+              <h2 className="text-xl font-bold text-stone-950">담벼락 만들기</h2>
+              <button
+                type="button"
+                onClick={() => setWallCreateOpen(false)}
+                className="rounded-full p-2 hover:bg-stone-100"
+                aria-label="담벼락 만들기 닫기"
+              >
+                <X size={18} />
+              </button>
+            </div>
         <div className="mt-5 space-y-4">
           <div>
             <p className="mb-2 text-sm font-bold text-stone-700">담벼락 형식</p>
@@ -916,7 +1004,7 @@ function WallManager({ form, setForm, submit, walls, origin }) {
               checked={form.showAuthorNames}
               onChange={(e) => setForm({ ...form, showAuthorNames: e.target.checked })}
             />
-            작성자 이름 표시
+            포스트잇에 작성자 이름표시
           </label>
         </div>
         <button
@@ -925,7 +1013,9 @@ function WallManager({ form, setForm, submit, walls, origin }) {
         >
           생성
         </button>
-      </form>
+          </form>
+        </div>
+      )}
 
       {questionEditorOpen && (
         <div className="fixed inset-0 z-30 grid place-items-center bg-stone-950/45 px-4">
@@ -1022,14 +1112,24 @@ function WallManager({ form, setForm, submit, walls, origin }) {
 
       <section className="rounded-[8px] bg-white/90 p-5 shadow-soft">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-xl font-bold">담벼락 목록</h2>
-          {copyMessage && (
-            <p className="rounded-[8px] bg-emerald-50 px-3 py-2 text-sm font-bold text-emerald-700">
-              {copyMessage}
-            </p>
-          )}
+          <div>
+            <h2 className="text-xl font-bold">담벼락 목록</h2>
+            {copyMessage && (
+              <p className="mt-2 rounded-[8px] bg-emerald-50 px-3 py-2 text-sm font-bold text-emerald-700">
+                {copyMessage}
+              </p>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => setWallCreateOpen(true)}
+            className="inline-flex items-center gap-2 rounded-[8px] bg-stone-900 px-4 py-2 text-sm font-bold text-white"
+          >
+            <Plus size={16} />
+            담벼락 만들기
+          </button>
         </div>
-        <div className="mt-4 grid gap-3 md:grid-cols-2">
+        <div className="mt-4 grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
           {sortedWalls.map((wall) => (
             <article
               key={wall.id}
@@ -1042,7 +1142,7 @@ function WallManager({ form, setForm, submit, walls, origin }) {
               <p className="mt-3 text-xs text-stone-500">생성 시간 {dateText(wall.createdAt)}</p>
               <label className="mt-3 flex items-center justify-between gap-3 rounded-[10px] bg-white/65 px-3 py-2">
                 <span>
-                  <b className="block text-sm text-stone-800">학생 대시보드에 표시</b>
+                  <b className="block text-sm text-stone-800">학생 홈페이지에 이 담벼락을 공개</b>
                   <span className="text-xs text-stone-500">
                     끄면 학생 목록에서는 숨기고 링크 접속은 유지합니다.
                   </span>

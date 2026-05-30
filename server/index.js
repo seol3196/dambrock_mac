@@ -268,8 +268,9 @@ app.post('/api/walls', requireUser, requireRole('teacher'), (req, res) => {
   db.prepare(
     `INSERT INTO walls
      (id, title, description, access_mode, comments_enabled, likes_enabled, owner_id, owner_name,
-      show_author_names, visible_to_students, post_mode, post_template, background_tone, column_count, column_names, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      show_author_names, visible_to_students, public_view_enabled, post_mode, post_template, background_tone,
+      column_mode_enabled, column_count, column_names, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     wallId,
     String(req.body.title || '').trim(),
@@ -281,9 +282,11 @@ app.post('/api/walls', requireUser, requireRole('teacher'), (req, res) => {
     String(req.body.ownerName || req.user.display_name || req.user.login_id),
     req.body.showAuthorNames === false ? 0 : 1,
     req.body.visibleToStudents === false ? 0 : 1,
+    req.body.publicViewEnabled === true ? 1 : 0,
     postMode,
     JSON.stringify(postTemplate),
     req.body.backgroundTone || 'bg-[#fff8e8]',
+    req.body.columnModeEnabled === true ? 1 : 0,
     Number(req.body.columnCount || 4),
     JSON.stringify(req.body.columnNames || {}),
     now()
@@ -294,6 +297,9 @@ app.post('/api/walls', requireUser, requireRole('teacher'), (req, res) => {
 app.get('/api/walls/:id', (req, res) => {
   const wall = toWall(db.prepare('SELECT * FROM walls WHERE id = ?').get(req.params.id));
   if (!wall) return res.status(404).json({ error: 'not-found' });
+  if (req.query.view === 'readonly' && !wall.publicViewEnabled) {
+    return res.status(403).json({ error: 'public-view-disabled' });
+  }
   if (wall.accessMode === 'login' && !userFrom(req) && req.query.view !== 'readonly') {
     return res.status(401).json({ error: 'unauthenticated' });
   }
@@ -318,9 +324,11 @@ app.patch('/api/walls/:id', requireUser, requireRole('teacher'), (req, res) => {
       likes_enabled = COALESCE(?, likes_enabled),
       show_author_names = COALESCE(?, show_author_names),
       visible_to_students = COALESCE(?, visible_to_students),
+      public_view_enabled = COALESCE(?, public_view_enabled),
       post_mode = COALESCE(?, post_mode),
       post_template = COALESCE(?, post_template),
       background_tone = COALESCE(?, background_tone),
+      column_mode_enabled = COALESCE(?, column_mode_enabled),
       column_count = COALESCE(?, column_count),
       column_names = COALESCE(?, column_names),
       updated_at = ?
@@ -333,9 +341,11 @@ app.patch('/api/walls/:id', requireUser, requireRole('teacher'), (req, res) => {
     req.body.likesEnabled == null ? null : req.body.likesEnabled ? 1 : 0,
     req.body.showAuthorNames == null ? null : req.body.showAuthorNames ? 1 : 0,
     req.body.visibleToStudents == null ? null : req.body.visibleToStudents ? 1 : 0,
+    req.body.publicViewEnabled == null ? null : req.body.publicViewEnabled ? 1 : 0,
     nextPostMode,
     nextPostTemplate,
     req.body.backgroundTone == null ? null : req.body.backgroundTone,
+    req.body.columnModeEnabled == null ? null : req.body.columnModeEnabled ? 1 : 0,
     req.body.columnCount == null ? null : Number(req.body.columnCount),
     req.body.columnNames == null ? null : JSON.stringify(req.body.columnNames),
     now(),
@@ -427,6 +437,9 @@ app.get('/api/posts', (req, res) => {
   if (!wallId) return res.status(400).json({ error: 'wallId-required' });
   const wall = toWall(db.prepare('SELECT * FROM walls WHERE id = ?').get(wallId));
   if (!wall) return res.status(404).json({ error: 'not-found' });
+  if (req.query.view === 'readonly' && !wall.publicViewEnabled) {
+    return res.status(403).json({ error: 'public-view-disabled' });
+  }
   if (wall.accessMode === 'login' && !userFrom(req) && req.query.view !== 'readonly') {
     return res.status(401).json({ error: 'unauthenticated' });
   }
@@ -598,6 +611,9 @@ app.get('/api/comments', (req, res) => {
   const post = db.prepare('SELECT * FROM posts WHERE id = ?').get(postId);
   if (!post) return res.status(404).json({ error: 'not-found' });
   const wall = toWall(db.prepare('SELECT * FROM walls WHERE id = ?').get(post.wall_id));
+  if (req.query.view === 'readonly' && !wall?.publicViewEnabled) {
+    return res.status(403).json({ error: 'public-view-disabled' });
+  }
   if (wall?.accessMode === 'login' && !userFrom(req) && req.query.view !== 'readonly') {
     return res.status(401).json({ error: 'unauthenticated' });
   }

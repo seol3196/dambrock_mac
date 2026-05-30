@@ -28,6 +28,7 @@ export default function PostCard({
   const { user, role } = useAuth();
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const isMyPost = Boolean(!readOnly && user && post.authorId === user.uid);
   const liked = Boolean(user && post.likedBy?.[user.uid]);
   const likeCount = post.likeCount || Object.keys(post.likedBy || {}).length;
   const canDelete =
@@ -90,7 +91,9 @@ export default function PostCard({
       }}
       className={`paper-edge fade-pop relative w-full rounded-[10px] border border-stone-900/5 ${
         post.color || 'bg-yellow-100'
-      } p-4 shadow-paper ${canDrag ? 'cursor-grab active:cursor-grabbing' : ''}`}
+      } p-4 shadow-paper ${canDrag ? 'cursor-grab active:cursor-grabbing' : ''} ${
+        isMyPost ? 'ring-2 ring-teal-700/15' : ''
+      }`}
     >
       {dropPreview === 'before' && (
         <div className="pointer-events-none absolute -top-2 left-2 right-2 h-1 rounded-full bg-stone-500/45 shadow-sm" />
@@ -108,6 +111,11 @@ export default function PostCard({
           )}
         </div>
         <div className="flex items-center gap-1">
+          {isMyPost && (
+            <span className="rounded-full border border-teal-200 bg-teal-50 px-2 py-1 text-xs font-black text-teal-700">
+              내 글
+            </span>
+          )}
           {canEdit && (
             <button
               type="button"

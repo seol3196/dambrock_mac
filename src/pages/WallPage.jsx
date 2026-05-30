@@ -4,7 +4,6 @@ import {
   Download,
   MoreHorizontal,
   Plus,
-  QrCode,
   Send,
   Settings2,
   Share2,
@@ -133,6 +132,7 @@ export default function WallPage() {
   const [posts, setPosts] = useState([]);
   const [modalOpen, setModalOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
+  const [qrPreviewOpen, setQrPreviewOpen] = useState(false);
   const [shareMessage, setShareMessage] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [actionsOpen, setActionsOpen] = useState(false);
@@ -166,7 +166,9 @@ export default function WallPage() {
     [effectiveShowAuthorNames, wall]
   );
   const canManageWall = Boolean(!readOnlyMode && user && role === 'teacher' && wall?.ownerId === user.uid);
-  const canMovePosts = Boolean(!readOnlyMode && user);
+  const publicViewEnabled = wall?.publicViewEnabled === true;
+  const columnModeEnabled = wall?.columnModeEnabled === true;
+  const canMovePosts = Boolean(columnModeEnabled && !readOnlyMode && user);
   const columnCount = clampColumnCount(wall?.columnCount ?? 4);
   const requestedColumn = Number(searchParams.get('column'));
   const columnNumbers = useMemo(
@@ -237,6 +239,8 @@ export default function WallPage() {
               likesEnabled: nextWall.likesEnabled ?? true,
               showAuthorNames: nextWall.showAuthorNames ?? true,
               visibleToStudents: nextWall.visibleToStudents ?? true,
+              publicViewEnabled: nextWall.publicViewEnabled ?? false,
+              columnModeEnabled: nextWall.columnModeEnabled ?? false,
               postMode: nextWall.postMode || 'free',
               postTemplate: nextWall.postTemplate || { fields: [] },
               backgroundTone: nextWall.backgroundTone || wallBackgroundOptions[0].value
@@ -341,9 +345,11 @@ export default function WallPage() {
       return;
     }
 
-    const targetColumn = columnNumbers.includes(postTargetColumn)
-      ? postTargetColumn
-      : sharedColumn;
+    const targetColumn = columnModeEnabled
+      ? columnNumbers.includes(postTargetColumn)
+        ? postTargetColumn
+        : sharedColumn
+      : null;
 
     await createPost({
       wallId,
@@ -365,7 +371,7 @@ export default function WallPage() {
   function openCreatePostModal(column = null) {
     if (readOnlyMode) return;
     setEditingPost(null);
-    setPostTargetColumn(columnNumbers.includes(column) ? column : null);
+    setPostTargetColumn(columnModeEnabled && columnNumbers.includes(column) ? column : null);
     setForm({
       content: '',
       color: colorOptions[0].value,
@@ -467,6 +473,34 @@ export default function WallPage() {
     if (!settingsForm) return;
     await updateWall(wallId, settingsForm);
     setSettingsOpen(false);
+  }
+
+  async function updateShareAccessMode(loginRequired) {
+    const accessMode = loginRequired ? 'login' : 'public';
+    await updateWall(wallId, { accessMode });
+    setSettingsForm((current) => (current ? { ...current, accessMode } : current));
+  }
+
+  async function updatePublicViewEnabled(enabled) {
+    const previousValue = wall?.publicViewEnabled === true;
+    setWall((current) => (current ? { ...current, publicViewEnabled: enabled } : current));
+    setSettingsForm((current) => (current ? { ...current, publicViewEnabled: enabled } : current));
+    setShareMessage('');
+
+    try {
+      const data = await updateWall(wallId, { publicViewEnabled: enabled });
+      if (data?.wall) setWall(data.wall);
+      setShareMessage(
+        enabled ? '공개보기 링크를 활성화했습니다.' : '공개보기 링크를 비활성화했습니다.'
+      );
+      window.setTimeout(() => setShareMessage(''), 1600);
+    } catch {
+      setWall((current) => (current ? { ...current, publicViewEnabled: previousValue } : current));
+      setSettingsForm((current) =>
+        current ? { ...current, publicViewEnabled: previousValue } : current
+      );
+      alert('공개보기 링크 설정을 저장하지 못했습니다. 다시 시도해 주세요.');
+    }
   }
 
   async function addColumn() {
@@ -744,7 +778,7 @@ export default function WallPage() {
 
       <section className="mx-auto w-full max-w-[1600px] px-5 py-6">
         <div data-testid="wall-board">
-          {canManageWall && (
+          {canManageWall && columnModeEnabled && (
             <div className="mb-4 flex justify-end">
               <button
                 type="button"
@@ -776,8 +810,8 @@ export default function WallPage() {
                     : ''
                 }`}
               >
-                <div className="mb-4 px-1">
-                  {canManageWall ? (
+                <div className={columnModeEnabled ? 'mb-4 px-1' : ''}>
+                  {columnModeEnabled && canManageWall ? (
                     <div className="flex min-h-12 items-center gap-2 rounded-[10px] border border-white/75 bg-white/68 px-3 py-2 shadow-sm backdrop-blur-[2px]">
                       <input
                         value={columnNameDrafts[column] ?? columnName(wall, column)}
@@ -807,7 +841,7 @@ export default function WallPage() {
                         <Trash2 size={15} />
                       </button>
                     </div>
-                  ) : columnName(wall, column) ? (
+                  ) : columnModeEnabled && columnName(wall, column) ? (
                     <h2 className="flex min-h-12 items-center gap-2 rounded-[10px] border border-white/75 bg-white/68 px-3 py-2 text-stone-900 shadow-sm backdrop-blur-[2px]">
                       <span className="min-w-0 flex-1 truncate text-center text-xl font-extrabold sm:text-2xl">
                         {columnTitle(wall, column)}
@@ -823,9 +857,9 @@ export default function WallPage() {
                         </button>
                       )}
                     </h2>
-                  ) : (
+                  ) : columnModeEnabled ? (
                     <div className="min-h-12" />
-                  )}
+                  ) : null}
                 </div>
                 <div className="space-y-4">
                   {postsByColumn[column].map((post) => (
@@ -900,108 +934,134 @@ export default function WallPage() {
               </button>
             </div>
 
-            <div className="mt-5 space-y-4">
-              <div>
-                <label className="mb-2 block text-sm font-bold text-stone-700">제목</label>
-                <input
-                  value={settingsForm.title}
-                  onChange={(e) => setSettingsForm({ ...settingsForm, title: e.target.value })}
-                  className="h-11 w-full rounded-[8px] border border-stone-200 px-3"
-                />
-              </div>
-              <div>
-                <label className="mb-2 block text-sm font-bold text-stone-700">설명</label>
-                <textarea
-                  value={settingsForm.description}
-                  onChange={(e) => setSettingsForm({ ...settingsForm, description: e.target.value })}
-                  className="min-h-24 w-full rounded-[8px] border border-stone-200 p-3"
-                />
-              </div>
-              <label className="flex items-center justify-between rounded-[10px] border border-stone-200 px-4 py-3">
-                <span className="text-sm font-bold text-stone-800">로그인 필요</span>
-                <input
-                  type="checkbox"
-                  checked={settingsForm.accessMode === 'login'}
-                  onChange={(e) =>
-                    setSettingsForm({
-                      ...settingsForm,
-                      accessMode: e.target.checked ? 'login' : 'public'
-                    })
-                  }
-                />
-              </label>
-              <label className="flex items-center justify-between rounded-[10px] border border-stone-200 px-4 py-3">
-                <span className="text-sm font-bold text-stone-800">댓글 사용</span>
-                <input
-                  type="checkbox"
-                  checked={settingsForm.commentsEnabled}
-                  onChange={(e) =>
-                    setSettingsForm({ ...settingsForm, commentsEnabled: e.target.checked })
-                  }
-                />
-              </label>
-              <label className="flex items-center justify-between rounded-[10px] border border-stone-200 px-4 py-3">
-                <span className="text-sm font-bold text-stone-800">좋아요 사용</span>
-                <input
-                  type="checkbox"
-                  checked={settingsForm.likesEnabled}
-                  onChange={(e) =>
-                    setSettingsForm({ ...settingsForm, likesEnabled: e.target.checked })
-                  }
-                />
-              </label>
-              <label className="flex items-center justify-between rounded-[10px] border border-stone-200 px-4 py-3">
-                <span>
-                  <b className="block text-sm text-stone-800">학생 대시보드에 표시</b>
-                  <span className="text-xs text-stone-500">
-                    끄면 학생 목록에서는 숨기고 링크 접속은 유지합니다.
-                  </span>
-                </span>
-                <input
-                  type="checkbox"
-                  checked={settingsForm.visibleToStudents}
-                  onChange={(e) =>
-                    setSettingsForm({ ...settingsForm, visibleToStudents: e.target.checked })
-                  }
-                />
-              </label>
-              <label className="flex items-center justify-between rounded-[10px] border border-stone-200 px-4 py-3">
-                <span>
-                  <b className="block text-sm text-stone-800">작성자 이름 표시</b>
-                  <span className="text-xs text-stone-500">
-                    끄면 학생 포스트잇과 댓글 작성자 이름을 숨깁니다.
-                  </span>
-                </span>
-                <input
-                  type="checkbox"
-                  checked={settingsForm.showAuthorNames}
-                  onChange={(e) =>
-                    setSettingsForm({ ...settingsForm, showAuthorNames: e.target.checked })
-                  }
-                />
-              </label>
-              <div>
-                <p className="mb-2 text-sm font-bold text-stone-700">코르크 배경 색상</p>
-                <div className="grid grid-cols-3 gap-2">
-                  {wallBackgroundOptions.map((option) => (
-                    <button
-                      key={option.value}
-                      type="button"
-                      onClick={() =>
-                        setSettingsForm({ ...settingsForm, backgroundTone: option.value })
-                      }
-                      className={`rounded-[12px] border p-3 text-sm font-bold text-stone-700 ${
-                        settingsForm.backgroundTone === option.value
-                          ? 'border-stone-900'
-                          : 'border-transparent'
-                      }`}
-                      style={{ backgroundColor: option.swatch }}
-                    >
-                      {option.name}
-                    </button>
-                  ))}
+            <div className="mt-5 space-y-6">
+              <section>
+                <h3 className="text-xs font-black uppercase tracking-[0.18em] text-stone-500">
+                  기본 정보
+                </h3>
+                <div className="mt-3 space-y-3">
+                  <div>
+                    <label className="mb-1.5 block text-sm font-bold text-stone-800">제목</label>
+                    <input
+                      value={settingsForm.title}
+                      onChange={(e) => setSettingsForm({ ...settingsForm, title: e.target.value })}
+                      className="h-10 w-full rounded-[8px] border border-stone-200 px-3 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-sm font-bold text-stone-800">설명</label>
+                    <textarea
+                      value={settingsForm.description}
+                      onChange={(e) => setSettingsForm({ ...settingsForm, description: e.target.value })}
+                      className="min-h-20 w-full rounded-[8px] border border-stone-200 p-3 text-sm"
+                    />
+                  </div>
                 </div>
-              </div>
+              </section>
+
+              <section>
+                <h3 className="text-xs font-black uppercase tracking-[0.18em] text-stone-500">
+                  참여 설정
+                </h3>
+                <div className="mt-2 divide-y divide-stone-200 rounded-[10px] border border-stone-200 px-4">
+                  <label className="flex items-center justify-between gap-4 py-3">
+                    <span className="text-sm font-bold text-stone-900">댓글 사용</span>
+                    <input
+                      type="checkbox"
+                      checked={settingsForm.commentsEnabled}
+                      onChange={(e) =>
+                        setSettingsForm({ ...settingsForm, commentsEnabled: e.target.checked })
+                      }
+                      className="h-4 w-4 shrink-0 accent-stone-900"
+                    />
+                  </label>
+                  <label className="flex items-center justify-between gap-4 py-3">
+                    <span className="text-sm font-bold text-stone-900">좋아요 사용</span>
+                    <input
+                      type="checkbox"
+                      checked={settingsForm.likesEnabled}
+                      onChange={(e) =>
+                        setSettingsForm({ ...settingsForm, likesEnabled: e.target.checked })
+                      }
+                      className="h-4 w-4 shrink-0 accent-stone-900"
+                    />
+                  </label>
+                  <label className="flex items-center justify-between gap-4 py-3">
+                    <span>
+                      <b className="block text-sm text-stone-900">학생 홈페이지에 이 담벼락을 공개</b>
+                      <span className="text-xs text-stone-500">학생 목록에서만 숨김</span>
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={settingsForm.visibleToStudents}
+                      onChange={(e) =>
+                        setSettingsForm({ ...settingsForm, visibleToStudents: e.target.checked })
+                      }
+                      className="h-4 w-4 shrink-0 accent-stone-900"
+                    />
+                  </label>
+                  <label className="flex items-center justify-between gap-4 py-3">
+                    <span>
+                      <b className="block text-sm text-stone-900">포스트잇에 작성자 이름표시</b>
+                      <span className="text-xs text-stone-500">학생에게 이름을 숨김</span>
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={settingsForm.showAuthorNames}
+                      onChange={(e) =>
+                        setSettingsForm({ ...settingsForm, showAuthorNames: e.target.checked })
+                      }
+                      className="h-4 w-4 shrink-0 accent-stone-900"
+                    />
+                  </label>
+                </div>
+              </section>
+
+              <section>
+                <h3 className="text-xs font-black uppercase tracking-[0.18em] text-stone-500">
+                  보드 형태
+                </h3>
+                <div className="mt-2 divide-y divide-stone-200 rounded-[10px] border border-stone-200 px-4">
+                  <label className="flex items-center justify-between gap-4 py-3">
+                    <span>
+                      <b className="block text-sm text-stone-900">컬럼 모드 사용</b>
+                      <span className="text-xs text-stone-500">주제별 컬럼으로 나눔</span>
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={settingsForm.columnModeEnabled}
+                      onChange={(e) =>
+                        setSettingsForm({ ...settingsForm, columnModeEnabled: e.target.checked })
+                      }
+                      className="h-4 w-4 shrink-0 accent-stone-900"
+                    />
+                  </label>
+                  <div className="py-3">
+                    <p className="mb-2 text-sm font-bold text-stone-900">코르크 배경 색상</p>
+                    <div className="grid grid-cols-6 gap-2">
+                      {wallBackgroundOptions.map((option) => (
+                        <button
+                          key={option.value}
+                          type="button"
+                          onClick={() =>
+                            setSettingsForm({ ...settingsForm, backgroundTone: option.value })
+                          }
+                          className={`h-9 rounded-full border-2 text-[0px] transition ${
+                            settingsForm.backgroundTone === option.value
+                              ? 'border-stone-900'
+                              : 'border-white shadow-sm'
+                          }`}
+                          style={{ backgroundColor: option.swatch }}
+                          title={option.name}
+                          aria-label={option.name}
+                        >
+                          {option.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </section>
             </div>
 
             <div className="mt-5 flex gap-2">
@@ -1128,7 +1188,10 @@ export default function WallPage() {
               <h2 className="text-xl font-bold">담벼락 공유</h2>
               <button
                 type="button"
-                onClick={() => setShareOpen(false)}
+                onClick={() => {
+                  setShareOpen(false);
+                  setQrPreviewOpen(false);
+                }}
                 className="rounded-full p-2 hover:bg-stone-100"
                 aria-label="공유 닫기"
               >
@@ -1136,9 +1199,17 @@ export default function WallPage() {
               </button>
             </div>
 
-            <div className="mt-5 grid place-items-center rounded-[16px] bg-stone-50 p-4">
+            <button
+              type="button"
+              onClick={() => setQrPreviewOpen(true)}
+              className="mt-5 grid w-full place-items-center rounded-[16px] bg-stone-50 p-4 transition hover:bg-stone-100"
+              aria-label="QR 코드 크게 보기"
+            >
               <QRCodeSVG value={shareUrl} size={180} />
-            </div>
+              <span className="mt-2 text-xs font-bold text-stone-500">
+                QR 코드를 누르면 크게 볼 수 있습니다.
+              </span>
+            </button>
 
             <div className="mt-4 rounded-[12px] border border-stone-200 bg-stone-50 p-3 text-sm text-stone-700">
               <p className="font-bold text-stone-900">공유 링크</p>
@@ -1153,68 +1224,110 @@ export default function WallPage() {
                   복사
                 </button>
               </div>
+              <label className="mt-3 flex items-center justify-between gap-4 rounded-[10px] bg-white/70 px-3 py-3">
+                <span>
+                  <b className="block text-sm text-stone-900">로그인 필요</b>
+                  <span className="mt-1 block text-xs leading-5 text-stone-500">
+                    <span className="block">켜면 계정이 있는 학생만 참여할 수 있습니다.</span>
+                    <span className="block">끄면 링크가 있는 사람 누구나 글을 쓸 수 있습니다.</span>
+                  </span>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={wall?.accessMode === 'login'}
+                  onChange={(event) => updateShareAccessMode(event.target.checked)}
+                  className="h-4 w-4 shrink-0 accent-stone-900"
+                />
+              </label>
             </div>
 
             <div className="mt-4 rounded-[12px] border border-stone-200 bg-stone-50 p-3 text-sm text-stone-700">
-              <p className="font-bold text-stone-900">공개보기 링크</p>
-              <p className="mt-1 text-xs text-stone-500">이 링크에서는 글쓰기 없이 보기만 가능합니다.</p>
-              <div className="mt-3 space-y-2">
-                {[
-                  ['visible', '작성자 표시'],
-                  ['hidden', '작성자 숨김']
-                ].map(([authors, label]) => {
-                  const url = publicViewShareUrl(authors);
-                  return (
+              <div className="flex items-center justify-between gap-4">
+                <span>
+                  <b className="block font-bold text-stone-900">공개보기 링크</b>
+                  <span className="text-xs text-stone-500">글쓰기 없이 보기만 가능한 링크</span>
+                </span>
+                <div className="grid shrink-0 grid-cols-2 overflow-hidden rounded-[9px] border border-stone-200 bg-white p-0.5">
+                  {[
+                    [false, '비활성화'],
+                    [true, '활성화']
+                  ].map(([value, label]) => (
+                    <button
+                      key={label}
+                      type="button"
+                      onClick={() => updatePublicViewEnabled(value)}
+                      className={`rounded-[7px] px-3 py-1.5 text-xs font-bold transition ${
+                        publicViewEnabled === value
+                          ? 'bg-stone-900 text-white'
+                          : 'text-stone-500 hover:text-stone-900'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {publicViewEnabled && (
+                <div className="mt-3 space-y-2">
+                  {[
+                    ['visible', '학생 이름 공개'],
+                    ['hidden', '학생 이름 비공개']
+                  ].map(([authors, label]) => {
+                    const url = publicViewShareUrl(authors);
+                    return (
+                      <div
+                        key={authors}
+                        className="flex items-center gap-2 rounded-[10px] bg-white/70 px-3 py-2"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-bold text-stone-800">{label}</p>
+                          <p className="truncate text-xs text-stone-500">{url}</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => copyShareUrl(url, `${label} 공개보기 링크`)}
+                          className="inline-flex shrink-0 items-center gap-1 rounded-[8px] border border-stone-200 px-2.5 py-1.5 text-xs font-bold text-stone-700 hover:bg-stone-50"
+                        >
+                          <Copy size={13} />
+                          복사
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {columnModeEnabled && (
+              <div className="mt-4 rounded-[12px] border border-stone-200 bg-stone-50 p-3">
+                <p className="text-sm font-bold text-stone-900">
+                  {'\uCEEC\uB7FC\uBCC4 \uACF5\uC720 \uB9C1\uD06C'}
+                </p>
+                <div className="mt-3 space-y-2">
+                  {columnNumbers.map((column) => (
                     <div
-                      key={authors}
+                      key={column}
                       className="flex items-center gap-2 rounded-[10px] bg-white/70 px-3 py-2"
                     >
                       <div className="min-w-0 flex-1">
-                        <p className="text-sm font-bold text-stone-800">{label}</p>
-                        <p className="truncate text-xs text-stone-500">{url}</p>
+                        <p className="truncate text-sm font-bold text-stone-800">
+                          {columnName(wall, column) || `${column}\uBC88 \uCEEC\uB7FC`}
+                        </p>
+                        <p className="truncate text-xs text-stone-500">{columnShareUrl(column)}</p>
                       </div>
                       <button
                         type="button"
-                        onClick={() => copyShareUrl(url, `${label} 공개보기 링크`)}
+                        onClick={() => copyShareUrl(columnShareUrl(column), `${columnName(wall, column) || `${column}번 컬럼`} 링크`)}
                         className="inline-flex shrink-0 items-center gap-1 rounded-[8px] border border-stone-200 px-2.5 py-1.5 text-xs font-bold text-stone-700 hover:bg-stone-50"
                       >
                         <Copy size={13} />
-                        복사
+                        {'\uBCF5\uC0AC'}
                       </button>
                     </div>
-                  );
-                })}
+                  ))}
+                </div>
               </div>
-            </div>
-
-            <div className="mt-4 rounded-[12px] border border-stone-200 bg-stone-50 p-3">
-              <p className="text-sm font-bold text-stone-900">
-                {'\uCEEC\uB7FC\uBCC4 \uACF5\uC720 \uB9C1\uD06C'}
-              </p>
-              <div className="mt-3 space-y-2">
-                {columnNumbers.map((column) => (
-                  <div
-                    key={column}
-                    className="flex items-center gap-2 rounded-[10px] bg-white/70 px-3 py-2"
-                  >
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-bold text-stone-800">
-                        {columnName(wall, column) || `${column}\uBC88 \uCEEC\uB7FC`}
-                      </p>
-                      <p className="truncate text-xs text-stone-500">{columnShareUrl(column)}</p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => copyShareUrl(columnShareUrl(column), `${columnName(wall, column) || `${column}번 컬럼`} 링크`)}
-                      className="inline-flex shrink-0 items-center gap-1 rounded-[8px] border border-stone-200 px-2.5 py-1.5 text-xs font-bold text-stone-700 hover:bg-stone-50"
-                    >
-                      <Copy size={13} />
-                      {'\uBCF5\uC0AC'}
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
+            )}
 
             {shareMessage && (
               <p className="mt-3 rounded-[8px] bg-emerald-50 px-3 py-2 text-sm font-bold text-emerald-700">
@@ -1225,13 +1338,37 @@ export default function WallPage() {
             <div className="mt-4">
               <button
                 type="button"
-                onClick={() => setShareOpen(false)}
+                onClick={() => {
+                  setShareOpen(false);
+                  setQrPreviewOpen(false);
+                }}
                 className="inline-flex w-full items-center justify-center gap-2 rounded-[10px] border border-stone-300 px-4 py-3 text-sm font-bold text-stone-700"
               >
-                <QrCode size={16} />
                 닫기
               </button>
             </div>
+          </section>
+        </div>
+      )}
+
+      {qrPreviewOpen && (
+        <div className="fixed inset-0 z-30 grid place-items-center bg-stone-950/65 px-4">
+          <section className="w-full max-w-sm rounded-[18px] bg-white p-6 text-center shadow-soft">
+            <div className="flex items-center justify-between text-left">
+              <h2 className="text-xl font-bold text-stone-950">QR 코드</h2>
+              <button
+                type="button"
+                onClick={() => setQrPreviewOpen(false)}
+                className="rounded-full p-2 hover:bg-stone-100"
+                aria-label="QR 크게보기 닫기"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="mt-5 grid place-items-center rounded-[16px] bg-stone-50 p-5">
+              <QRCodeSVG value={shareUrl} size={280} />
+            </div>
+            <p className="mt-3 break-all text-xs text-stone-500">{shareUrl}</p>
           </section>
         </div>
       )}
