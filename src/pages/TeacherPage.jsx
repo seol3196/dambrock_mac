@@ -2,10 +2,13 @@ import {
   BrickWall,
   Copy,
   ExternalLink,
+  Folder,
+  FolderPlus,
   KeyRound,
   Pencil,
   Plus,
   Printer,
+  Search,
   Trash2,
   Users,
   X
@@ -18,14 +21,18 @@ import { useAuth } from '../contexts/AuthContext.jsx';
 import { createUser } from '../lib/auth';
 import {
   createWall,
+  createWallFolder,
+  deleteWallFolder,
   deleteStudentAccount,
   deleteStudentAccounts,
   deleteWall,
   setStudentPasswords,
   subscribeUsers,
+  subscribeWallFolders,
   subscribeWalls,
   updateUser,
-  updateWall
+  updateWall,
+  updateWallFolder
 } from '../lib/firestore';
 import { pickRandomQuote } from '../lib/quotes';
 import { dateText, paddedNumber, wallTone } from '../lib/ui';
@@ -37,6 +44,7 @@ export default function TeacherPage() {
   const [tab, setTab] = useState('walls');
   const [students, setStudents] = useState([]);
   const [walls, setWalls] = useState([]);
+  const [folders, setFolders] = useState([]);
   const [studentForm, setStudentForm] = useState({
     prefix: 'class_',
     start: '01',
@@ -58,6 +66,7 @@ export default function TeacherPage() {
     showAuthorNames: true,
     visibleToStudents: true,
     publicViewEnabled: false,
+    folderId: null,
     columnModeEnabled: false,
     postMode: 'free',
     postTemplate: {
@@ -76,10 +85,12 @@ export default function TeacherPage() {
       setStudents
     );
     const unsubWalls = subscribeWalls({ ownerId: user.uid }, setWalls);
+    const unsubFolders = subscribeWallFolders({ ownerId: user.uid }, setFolders);
 
     return () => {
       unsubStudents();
       unsubWalls();
+      unsubFolders();
     };
   }, [user.uid]);
 
@@ -247,6 +258,7 @@ export default function TeacherPage() {
       showAuthorNames: true,
       visibleToStudents: true,
       publicViewEnabled: false,
+      folderId: null,
       columnModeEnabled: false,
       postMode: 'free',
       postTemplate: {
@@ -283,6 +295,7 @@ export default function TeacherPage() {
           setForm={setWallForm}
           submit={submitWall}
           walls={walls}
+          folders={folders}
           origin={origin}
         />
       )}
@@ -788,17 +801,53 @@ function StudentManager({
   );
 }
 
-function WallManager({ form, setForm, submit, walls, origin }) {
+function WallManager({ form, setForm, submit, walls, folders, origin }) {
   const navigate = useNavigate();
   const [questionEditorOpen, setQuestionEditorOpen] = useState(false);
   const [wallCreateOpen, setWallCreateOpen] = useState(false);
   const [copyMessage, setCopyMessage] = useState('');
-  const sortedWalls = useMemo(
-    () => [...walls].sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0)),
-    [walls]
+  const [folderManagerOpen, setFolderManagerOpen] = useState(false);
+  const [folderModalOpen, setFolderModalOpen] = useState(false);
+  const [folderEditing, setFolderEditing] = useState(null);
+  const [folderName, setFolderName] = useState('');
+  const [activeFolderId, setActiveFolderId] = useState('all');
+  const [searchTerm, setSearchTerm] = useState('');
+  const folderById = useMemo(
+    () => Object.fromEntries(folders.map((folder) => [folder.id, folder])),
+    [folders]
   );
+  const sortedWalls = useMemo(() => {
+    const query = searchTerm.trim().toLocaleLowerCase('ko-KR');
+    return [...walls]
+      .filter((wall) => {
+        const folderNameValue = folderById[wall.folderId]?.name || '';
+        const matchesFolder =
+          activeFolderId === 'all' ||
+          (activeFolderId === 'unfiled' ? !wall.folderId : wall.folderId === activeFolderId);
+        const matchesSearch =
+          !query ||
+          [wall.title, wall.description, folderNameValue]
+            .some((value) => String(value || '').toLocaleLowerCase('ko-KR').includes(query));
+        return matchesFolder && matchesSearch;
+      })
+      .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+  }, [activeFolderId, folderById, searchTerm, walls]);
+  const folderCounts = useMemo(() => {
+    const counts = { all: walls.length, unfiled: 0 };
+    for (const folder of folders) counts[folder.id] = 0;
+    for (const wall of walls) {
+      if (wall.folderId && counts[wall.folderId] != null) counts[wall.folderId] += 1;
+      else counts.unfiled += 1;
+    }
+    return counts;
+  }, [folders, walls]);
   const templateFields = form.postTemplate?.fields || [];
   const previewFields = templateFields.slice(0, 3);
+
+  useEffect(() => {
+    if (activeFolderId === 'all' || activeFolderId === 'unfiled') return;
+    if (!folders.some((folder) => folder.id === activeFolderId)) setActiveFolderId('all');
+  }, [activeFolderId, folders]);
 
   async function copyWallLink(wallId) {
     const url = `${origin}/wall/${wallId}`;
@@ -870,6 +919,48 @@ function WallManager({ form, setForm, submit, walls, origin }) {
     });
   }
 
+  function openFolderModal(folder = null) {
+    setFolderEditing(folder);
+    setFolderName(folder?.name || '');
+    setFolderModalOpen(true);
+  }
+
+  async function saveFolder(event) {
+    event.preventDefault();
+    const name = folderName.trim();
+    if (!name) return;
+    if (!folderEditing && folders.length >= 20) {
+      alert('폴더는 최대 20개까지 만들 수 있습니다.');
+      return;
+    }
+
+    try {
+      if (folderEditing) await updateWallFolder(folderEditing.id, { name });
+      else await createWallFolder({ name });
+      setFolderModalOpen(false);
+      setFolderEditing(null);
+      setFolderName('');
+    } catch (error) {
+      const code = error?.code || '';
+      if (code === 'folder-name-exists') alert('이미 같은 이름의 폴더가 있습니다.');
+      else if (code === 'folder-limit-reached') alert('폴더는 최대 20개까지 만들 수 있습니다.');
+      else alert('폴더를 저장하지 못했습니다.');
+    }
+  }
+
+  async function removeFolder(folder) {
+    const ok = window.confirm(
+      `${folder.name} 폴더만 삭제됩니다. 담벼락은 미분류로 이동합니다. 계속할까요?`
+    );
+    if (!ok) return;
+    await deleteWallFolder(folder.id);
+    if (activeFolderId === folder.id) setActiveFolderId('all');
+  }
+
+  async function moveWallToFolder(wall, folderId) {
+    await updateWall(wall.id, { folderId: folderId || null });
+  }
+
   return (
     <div className="space-y-5">
       {wallCreateOpen && (
@@ -934,6 +1025,20 @@ function WallManager({ form, setForm, submit, walls, origin }) {
               onChange={(e) => setForm({ ...form, description: e.target.value })}
               className="min-h-24 w-full rounded-[8px] border border-stone-200 p-3"
             />
+          </Field>
+          <Field label="폴더">
+            <select
+              value={form.folderId || ''}
+              onChange={(e) => setForm({ ...form, folderId: e.target.value || null })}
+              className="h-11 w-full rounded-[8px] border border-stone-200 px-3"
+            >
+              <option value="">미분류</option>
+              {folders.map((folder) => (
+                <option key={folder.id} value={folder.id}>
+                  {folder.name}
+                </option>
+              ))}
+            </select>
           </Field>
           {form.postMode === 'worksheet' && (
             <div className="rounded-[10px] border border-stone-200 bg-stone-50 p-4">
@@ -1111,7 +1216,7 @@ function WallManager({ form, setForm, submit, walls, origin }) {
       )}
 
       <section className="rounded-[8px] bg-white/90 p-5 shadow-soft">
-        <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h2 className="text-xl font-bold">담벼락 목록</h2>
             {copyMessage && (
@@ -1129,6 +1234,71 @@ function WallManager({ form, setForm, submit, walls, origin }) {
             담벼락 만들기
           </button>
         </div>
+
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex min-w-0 flex-1 gap-2 overflow-x-auto pb-1">
+            {[
+              ['all', '전체', folderCounts.all],
+              ['unfiled', '미분류', folderCounts.unfiled]
+            ].map(([id, label, count]) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setActiveFolderId(id)}
+                className={`shrink-0 rounded-full px-3 py-1.5 text-sm font-bold ${
+                  activeFolderId === id
+                    ? 'bg-stone-900 text-white'
+                    : 'border border-stone-200 bg-white text-stone-700'
+                }`}
+              >
+                {label} {count}
+              </button>
+            ))}
+            {folders.map((folder) => (
+              <button
+                key={folder.id}
+                type="button"
+                onClick={() => setActiveFolderId(folder.id)}
+                className={`inline-flex shrink-0 items-center gap-1 rounded-full px-3 py-1.5 text-sm font-bold ${
+                  activeFolderId === folder.id
+                    ? 'bg-stone-900 text-white'
+                    : 'border border-stone-200 bg-white text-stone-700'
+                }`}
+              >
+                <Folder size={14} />
+                {folder.name} {folderCounts[folder.id] || 0}
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={() => setFolderManagerOpen(true)}
+            className="inline-flex shrink-0 items-center gap-1 rounded-[8px] border border-stone-200 bg-white px-3 py-2 text-sm font-bold text-stone-700 hover:border-stone-300"
+          >
+            <Pencil size={14} />
+            폴더 편집
+          </button>
+        </div>
+
+        <label className="mt-4 flex h-11 items-center gap-2 rounded-[8px] border border-stone-200 bg-white px-3">
+          <Search size={16} className="text-stone-400" />
+          <input
+            value={searchTerm}
+            onChange={(event) => setSearchTerm(event.target.value)}
+            className="min-w-0 flex-1 bg-transparent text-sm outline-none"
+            placeholder="담벼락 검색..."
+          />
+          {searchTerm && (
+            <button
+              type="button"
+              onClick={() => setSearchTerm('')}
+              className="text-xs font-bold text-stone-500 hover:text-stone-900"
+            >
+              지우기
+            </button>
+          )}
+        </label>
+
         <div className="mt-4 grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
           {sortedWalls.map((wall) => (
             <article
@@ -1140,6 +1310,21 @@ function WallManager({ form, setForm, submit, walls, origin }) {
                 {wall.description || '설명이 아직 없습니다.'}
               </p>
               <p className="mt-3 text-xs text-stone-500">생성 시간 {dateText(wall.createdAt)}</p>
+              <label className="mt-3 block text-xs font-bold text-stone-600">
+                폴더
+                <select
+                  value={wall.folderId || ''}
+                  onChange={(event) => moveWallToFolder(wall, event.target.value)}
+                  className="mt-1 h-9 w-full rounded-[8px] border border-stone-200 bg-white/80 px-2 text-sm font-semibold text-stone-800"
+                >
+                  <option value="">미분류</option>
+                  {folders.map((folder) => (
+                    <option key={folder.id} value={folder.id}>
+                      {folder.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
               <label className="mt-3 flex items-center justify-between gap-3 rounded-[10px] bg-white/65 px-3 py-2">
                 <span>
                   <b className="block text-sm text-stone-800">학생 홈페이지에 이 담벼락을 공개</b>
@@ -1181,10 +1366,146 @@ function WallManager({ form, setForm, submit, walls, origin }) {
             </article>
           ))}
           {!sortedWalls.length && (
-            <p className="text-sm text-stone-500">아직 만든 담벼락이 없습니다.</p>
+            <p className="text-sm text-stone-500">
+              {walls.length ? '조건에 맞는 담벼락이 없습니다.' : '아직 만든 담벼락이 없습니다.'}
+            </p>
           )}
         </div>
       </section>
+
+      {folderManagerOpen && (
+        <div className="fixed inset-0 z-30 grid place-items-center bg-stone-950/45 px-4">
+          <section className="w-full max-w-lg rounded-[18px] bg-white p-5 shadow-soft">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-bold text-stone-950">폴더 편집</h2>
+                <p className="mt-1 text-sm text-stone-500">
+                  폴더를 정리해도 담벼락 내용은 삭제되지 않습니다.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setFolderManagerOpen(false)}
+                className="rounded-full p-2 hover:bg-stone-100"
+                aria-label="폴더 편집 닫기"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={() => openFolderModal()}
+              disabled={folders.length >= 20}
+              className="mt-5 inline-flex h-10 w-full items-center justify-center gap-2 rounded-[8px] bg-stone-900 text-sm font-bold text-white disabled:opacity-40"
+            >
+              <FolderPlus size={16} />
+              폴더 추가
+            </button>
+            <div className="mt-4 max-h-[55vh] space-y-2 overflow-y-auto pr-1">
+              {!folders.length && (
+                <p className="rounded-[10px] bg-stone-50 px-3 py-4 text-center text-sm text-stone-500">
+                  아직 만든 폴더가 없습니다.
+                </p>
+              )}
+              {folders.map((folder) => (
+                <div
+                  key={folder.id}
+                  className="flex items-center justify-between gap-3 rounded-[10px] border border-stone-200 bg-stone-50 px-3 py-2"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-bold text-stone-900">{folder.name}</p>
+                    <p className="text-xs text-stone-500">
+                      담벼락 {folderCounts[folder.id] || 0}개
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => openFolderModal(folder)}
+                      className="inline-flex items-center gap-1 rounded-[8px] bg-white px-3 py-2 text-xs font-bold text-stone-700"
+                    >
+                      <Pencil size={13} />
+                      수정
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => removeFolder(folder)}
+                      className="inline-flex items-center gap-1 rounded-[8px] bg-white px-3 py-2 text-xs font-bold text-red-600"
+                    >
+                      <Trash2 size={13} />
+                      삭제
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={() => setFolderManagerOpen(false)}
+              className="mt-5 h-10 w-full rounded-[8px] border border-stone-200 text-sm font-bold text-stone-700"
+            >
+              닫기
+            </button>
+          </section>
+        </div>
+      )}
+
+      {folderModalOpen && (
+        <div className="fixed inset-0 z-40 grid place-items-center bg-stone-950/45 px-4">
+          <form
+            onSubmit={saveFolder}
+            className="w-full max-w-sm rounded-[18px] bg-white p-5 shadow-soft"
+          >
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-bold text-stone-950">
+                  {folderEditing ? '폴더 이름 변경' : '폴더 만들기'}
+                </h2>
+                <p className="mt-1 text-sm text-stone-500">폴더는 최대 20개까지 만들 수 있습니다.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setFolderModalOpen(false)}
+                className="rounded-full p-2 hover:bg-stone-100"
+                aria-label="폴더 모달 닫기"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <label className="mt-5 block text-sm font-bold text-stone-800">
+              폴더 이름
+              <input
+                autoFocus
+                value={folderName}
+                onChange={(event) => setFolderName(event.target.value.slice(0, 20))}
+                maxLength={20}
+                className="mt-2 h-11 w-full rounded-[8px] border border-stone-200 px-3 text-sm outline-none focus:border-stone-900"
+                placeholder="예: 1학기 활동"
+              />
+            </label>
+            <div className="mt-2 flex items-center justify-between text-xs text-stone-500">
+              <span>{folderName.trim().length}/20자</span>
+              <span>{folders.length}/20개 사용 중</span>
+            </div>
+            <div className="mt-5 flex gap-2">
+              <button
+                type="submit"
+                disabled={!folderName.trim() || (!folderEditing && folders.length >= 20)}
+                className="h-11 flex-1 rounded-[8px] bg-stone-900 text-sm font-bold text-white disabled:opacity-40"
+              >
+                {folderEditing ? '저장' : '폴더 만들기'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setFolderModalOpen(false)}
+                className="h-11 rounded-[8px] border border-stone-200 px-4 text-sm font-bold text-stone-700"
+              >
+                닫기
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 }

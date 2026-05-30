@@ -56,6 +56,7 @@ export function toWall(row) {
     showAuthorNames: row.show_author_names == null ? true : Boolean(row.show_author_names),
     visibleToStudents: row.visible_to_students == null ? true : Boolean(row.visible_to_students),
     publicViewEnabled: row.public_view_enabled == null ? false : Boolean(row.public_view_enabled),
+    folderId: row.folder_id || null,
     postMode: row.post_mode || 'free',
     postTemplate: json(row.post_template, { fields: [] }),
     ownerId: row.owner_id,
@@ -64,6 +65,17 @@ export function toWall(row) {
     columnModeEnabled: row.column_mode_enabled == null ? false : Boolean(row.column_mode_enabled),
     columnCount: row.column_count,
     columnNames: json(row.column_names, {}),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+export function toWallFolder(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    ownerId: row.owner_id,
+    name: row.name,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
@@ -131,6 +143,7 @@ export function initDb() {
       show_author_names INTEGER NOT NULL DEFAULT 1,
       visible_to_students INTEGER NOT NULL DEFAULT 1,
       public_view_enabled INTEGER NOT NULL DEFAULT 0,
+      folder_id TEXT,
       post_mode TEXT NOT NULL DEFAULT 'free',
       post_template TEXT NOT NULL DEFAULT '{"fields":[]}',
       owner_id TEXT NOT NULL REFERENCES users(uid) ON DELETE CASCADE,
@@ -141,6 +154,15 @@ export function initDb() {
       column_names TEXT NOT NULL DEFAULT '{}',
       created_at TEXT NOT NULL,
       updated_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS wall_folders (
+      id TEXT PRIMARY KEY,
+      owner_id TEXT NOT NULL REFERENCES users(uid) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT,
+      UNIQUE(owner_id, name)
     );
 
     CREATE TABLE IF NOT EXISTS posts (
@@ -171,6 +193,7 @@ export function initDb() {
     CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
     CREATE INDEX IF NOT EXISTS idx_users_teacher ON users(teacher_id);
     CREATE INDEX IF NOT EXISTS idx_walls_owner ON walls(owner_id);
+    CREATE INDEX IF NOT EXISTS idx_wall_folders_owner ON wall_folders(owner_id);
     CREATE INDEX IF NOT EXISTS idx_posts_wall ON posts(wall_id);
     CREATE INDEX IF NOT EXISTS idx_comments_post ON comments(post_id);
   `);
@@ -194,6 +217,10 @@ export function initDb() {
   if (!wallColumns.some((column) => column.name === 'public_view_enabled')) {
     db.prepare('ALTER TABLE walls ADD COLUMN public_view_enabled INTEGER NOT NULL DEFAULT 0').run();
   }
+  if (!wallColumns.some((column) => column.name === 'folder_id')) {
+    db.prepare('ALTER TABLE walls ADD COLUMN folder_id TEXT').run();
+  }
+  db.prepare('CREATE INDEX IF NOT EXISTS idx_walls_folder ON walls(folder_id)').run();
 
   const postColumns = db.prepare('PRAGMA table_info(posts)').all();
   if (!postColumns.some((column) => column.name === 'template_answers')) {

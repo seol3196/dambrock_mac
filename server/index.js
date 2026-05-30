@@ -13,7 +13,8 @@ import {
   toComment,
   toPost,
   toPublicUser,
-  toWall
+  toWall,
+  toWallFolder
 } from './db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -104,6 +105,16 @@ function normalizePostTemplate(value) {
       };
     })
   };
+}
+
+function normalizeFolderName(value) {
+  return String(value || '').trim().slice(0, 20);
+}
+
+function canUseFolder(folderId, ownerId) {
+  if (!folderId) return true;
+  const folder = db.prepare('SELECT * FROM wall_folders WHERE id = ?').get(folderId);
+  return Boolean(folder && folder.owner_id === ownerId);
 }
 
 function worksheetContent(template, answers) {
@@ -253,6 +264,75 @@ app.post('/api/users/passwords', requireUser, requireTeacherOrAdmin, (req, res) 
   res.json({ count: uids.length });
 });
 
+app.get('/api/wall-folders', requireUser, requireRole('teacher'), (req, res) => {
+  const ownerId = req.query.ownerId || req.user.uid;
+  if (ownerId !== req.user.uid) return res.status(403).json({ error: 'forbidden' });
+  const rows = db
+    .prepare('SELECT * FROM wall_folders WHERE owner_id = ? ORDER BY name ASC')
+    .all(ownerId);
+  res.json({ items: rows.map(toWallFolder) });
+});
+
+app.post('/api/wall-folders', requireUser, requireRole('teacher'), (req, res) => {
+  const name = normalizeFolderName(req.body.name);
+  if (!name) return res.status(400).json({ error: 'folder-name-required' });
+  const count = db
+    .prepare('SELECT COUNT(*) AS count FROM wall_folders WHERE owner_id = ?')
+    .get(req.user.uid).count;
+  if (count >= 20) return res.status(400).json({ error: 'folder-limit-reached' });
+
+  const folderId = id('folder_');
+  try {
+    db.prepare(
+      `INSERT INTO wall_folders (id, owner_id, name, created_at)
+       VALUES (?, ?, ?, ?)`
+    ).run(folderId, req.user.uid, name, now());
+  } catch (error) {
+    if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+      return res.status(409).json({ error: 'folder-name-exists' });
+    }
+    throw error;
+  }
+  res.status(201).json({
+    folder: toWallFolder(db.prepare('SELECT * FROM wall_folders WHERE id = ?').get(folderId))
+  });
+});
+
+app.patch('/api/wall-folders/:id', requireUser, requireRole('teacher'), (req, res) => {
+  const folder = db.prepare('SELECT * FROM wall_folders WHERE id = ?').get(req.params.id);
+  if (!folder) return res.status(404).json({ error: 'not-found' });
+  if (folder.owner_id !== req.user.uid) return res.status(403).json({ error: 'forbidden' });
+  const name = normalizeFolderName(req.body.name);
+  if (!name) return res.status(400).json({ error: 'folder-name-required' });
+  try {
+    db.prepare('UPDATE wall_folders SET name = ?, updated_at = ? WHERE id = ?').run(
+      name,
+      now(),
+      folder.id
+    );
+  } catch (error) {
+    if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+      return res.status(409).json({ error: 'folder-name-exists' });
+    }
+    throw error;
+  }
+  res.json({ folder: toWallFolder(db.prepare('SELECT * FROM wall_folders WHERE id = ?').get(folder.id)) });
+});
+
+app.delete('/api/wall-folders/:id', requireUser, requireRole('teacher'), (req, res) => {
+  const folder = db.prepare('SELECT * FROM wall_folders WHERE id = ?').get(req.params.id);
+  if (!folder) return res.status(404).json({ error: 'not-found' });
+  if (folder.owner_id !== req.user.uid) return res.status(403).json({ error: 'forbidden' });
+  db.transaction(() => {
+    db.prepare('UPDATE walls SET folder_id = NULL, updated_at = ? WHERE folder_id = ?').run(
+      now(),
+      folder.id
+    );
+    db.prepare('DELETE FROM wall_folders WHERE id = ?').run(folder.id);
+  })();
+  res.json({ ok: true });
+});
+
 app.get('/api/walls', requireUser, (req, res) => {
   const { ownerId } = req.query;
   const rows = ownerId
@@ -265,12 +345,16 @@ app.post('/api/walls', requireUser, requireRole('teacher'), (req, res) => {
   const wallId = id('wall_');
   const postMode = req.body.postMode === 'worksheet' ? 'worksheet' : 'free';
   const postTemplate = postMode === 'worksheet' ? normalizePostTemplate(req.body.postTemplate) : { fields: [] };
+  const folderId = req.body.folderId || null;
+  if (!canUseFolder(folderId, req.user.uid)) {
+    return res.status(400).json({ error: 'invalid-folder' });
+  }
   db.prepare(
     `INSERT INTO walls
      (id, title, description, access_mode, comments_enabled, likes_enabled, owner_id, owner_name,
-      show_author_names, visible_to_students, public_view_enabled, post_mode, post_template, background_tone,
+      show_author_names, visible_to_students, public_view_enabled, folder_id, post_mode, post_template, background_tone,
       column_mode_enabled, column_count, column_names, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     wallId,
     String(req.body.title || '').trim(),
@@ -283,6 +367,7 @@ app.post('/api/walls', requireUser, requireRole('teacher'), (req, res) => {
     req.body.showAuthorNames === false ? 0 : 1,
     req.body.visibleToStudents === false ? 0 : 1,
     req.body.publicViewEnabled === true ? 1 : 0,
+    folderId,
     postMode,
     JSON.stringify(postTemplate),
     req.body.backgroundTone || 'bg-[#fff8e8]',
@@ -311,6 +396,10 @@ app.patch('/api/walls/:id', requireUser, requireRole('teacher'), (req, res) => {
   if (!wall) return res.status(404).json({ error: 'not-found' });
   if (wall.owner_id !== req.user.uid) return res.status(403).json({ error: 'forbidden' });
   const nextPostMode = req.body.postMode == null ? null : req.body.postMode === 'worksheet' ? 'worksheet' : 'free';
+  const nextFolderId = req.body.folderId === undefined ? undefined : req.body.folderId || null;
+  if (nextFolderId !== undefined && !canUseFolder(nextFolderId, req.user.uid)) {
+    return res.status(400).json({ error: 'invalid-folder' });
+  }
   const nextPostTemplate =
     req.body.postTemplate == null
       ? null
@@ -325,6 +414,7 @@ app.patch('/api/walls/:id', requireUser, requireRole('teacher'), (req, res) => {
       show_author_names = COALESCE(?, show_author_names),
       visible_to_students = COALESCE(?, visible_to_students),
       public_view_enabled = COALESCE(?, public_view_enabled),
+      folder_id = ?,
       post_mode = COALESCE(?, post_mode),
       post_template = COALESCE(?, post_template),
       background_tone = COALESCE(?, background_tone),
@@ -342,6 +432,7 @@ app.patch('/api/walls/:id', requireUser, requireRole('teacher'), (req, res) => {
     req.body.showAuthorNames == null ? null : req.body.showAuthorNames ? 1 : 0,
     req.body.visibleToStudents == null ? null : req.body.visibleToStudents ? 1 : 0,
     req.body.publicViewEnabled == null ? null : req.body.publicViewEnabled ? 1 : 0,
+    nextFolderId === undefined ? wall.folder_id : nextFolderId,
     nextPostMode,
     nextPostTemplate,
     req.body.backgroundTone == null ? null : req.body.backgroundTone,

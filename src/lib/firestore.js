@@ -25,6 +25,10 @@ export function subscribeWalls(params, onValue) {
   return subscribe('/api/walls', params, onValue);
 }
 
+export function subscribeWallFolders(params, onValue) {
+  return subscribe('/api/wall-folders', params, onValue);
+}
+
 export function subscribeWall(wallId, onValue, onError, params = {}) {
   return subscribe(
     `/api/walls/${wallId}`,
@@ -55,6 +59,18 @@ export function updateWall(wallId, data) {
 
 export function deleteWall(wallId) {
   return apiFetch(`/api/walls/${wallId}`, { method: 'DELETE' });
+}
+
+export function createWallFolder(data) {
+  return apiFetch('/api/wall-folders', { method: 'POST', body: data });
+}
+
+export function updateWallFolder(folderId, data) {
+  return apiFetch(`/api/wall-folders/${folderId}`, { method: 'PATCH', body: data });
+}
+
+export function deleteWallFolder(folderId) {
+  return apiFetch(`/api/wall-folders/${folderId}`, { method: 'DELETE' });
 }
 
 export async function exportWallCsv(wallId) {
